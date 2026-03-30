@@ -48,11 +48,12 @@
             <div class="step-card">
                 <div class="step-label">Step 2</div>
                 <div class="step-title">Upload Attendance Logs (.dat)</div>
-                <div class="step-desc">Upload one or more ZKTeco biometric .dat files. Multiple files will merge
-                    automatically.</div>
+                <div class="step-desc">Upload one or more biometric log files. Supports .dat, .txt, .log, and other
+                    data formats from ZKTeco devices.</div>
                 <div class="drop-zone" id="dz-dat" ondragover="dzDrag(event,'dz-dat')" ondragleave="dzLeave('dz-dat')"
                     ondrop="dzDrop(event,'dat')">
-                    <input type="file" accept=".dat,.txt" multiple onchange="handleFiles(this.files,'dat')">
+                    <input type="file" accept=".dat,.txt,.log,.rec,.bin,text/plain,application/octet-stream" multiple
+                        onchange="handleFiles(this.files,'dat')">
                     <div class="drop-zone-icon">🕐</div>
                     <strong>Click or drag .dat files here</strong>
                 </div>
