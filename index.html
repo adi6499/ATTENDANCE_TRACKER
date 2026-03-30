@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR Attendance Report Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon">
+                <svg viewBox="0 0 24 24" stroke-width="1.8">
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+            </div>
+            <div>
+                <h1>Attendance Report Generator</h1>
+                <p>Upload biometric logs + shift master → Get a complete HR report instantly.</p>
+            </div>
+            <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()"
+                title="Toggle Dark/Light Mode">🌙</button>
+        </div>
+
+        <div id="error-box" class="error-box"></div>
+
+        <div class="steps" id="steps-container">
+            <div class="step-card">
+                <div class="step-label">Step 1</div>
+                <div class="step-title">Upload Shift Master (Excel)</div>
+                <div class="step-desc">Upload the .xlsx file with columns: UserID, Name, Department, Branch, Shift
+                    Start, Shift End</div>
+                <div class="drop-zone" id="dz-excel" ondragover="dzDrag(event,'dz-excel')"
+                    ondragleave="dzLeave('dz-excel')" ondrop="dzDrop(event,'excel')">
+                    <input type="file" accept=".xlsx,.xls,.csv" multiple onchange="handleFiles(this.files,'excel')">
+                    <div class="drop-zone-icon">📊</div>
+                    <strong>Click or drag Excel/CSV files here</strong>
+                </div>
+                <div class="file-list" id="fl-excel"></div>
+            </div>
+
+            <div class="step-card">
+                <div class="step-label">Step 2</div>
+                <div class="step-title">Upload Attendance Logs (.dat)</div>
+                <div class="step-desc">Upload one or more ZKTeco biometric .dat files. Multiple files will merge
+                    automatically.</div>
+                <div class="drop-zone" id="dz-dat" ondragover="dzDrag(event,'dz-dat')" ondragleave="dzLeave('dz-dat')"
+                    ondrop="dzDrop(event,'dat')">
+                    <input type="file" accept=".dat,.txt" multiple onchange="handleFiles(this.files,'dat')">
+                    <div class="drop-zone-icon">🕐</div>
+                    <strong>Click or drag .dat files here</strong>
+                </div>
+                <div class="file-list" id="fl-dat"></div>
+            </div>
+        </div>
+
+        <div class="generate-row">
+            <button class="btn-generate" id="btn-gen" onclick="generateReport()" disabled>
+                <svg viewBox="0 0 24 24" stroke-width="2">
+                    <polyline points="13 2 13 9 20 9" />
+                    <path d="M20 14v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l7 7z" />
+                </svg> Generate Report
+            </button>
+
+            <button class="btn-clear" id="btn-clear" onclick="clearData()">
+                <svg viewBox="0 0 24 24" stroke-width="2" width="16" height="16" stroke="currentColor" fill="none">
+                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                    </path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                Clear Data
+            </button>
+
+            <div id="dl-wrap">
+                <div id="dl-msg" class="dl-warning">⚠ Select 'From' and 'To' dates to unlock Download.</div>
+                <button class="btn-download" id="btn-dl" onclick="downloadExcel()">
+                    <svg viewBox="0 0 24 24" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg> Download Statement
+                </button>
+            </div>
+        </div>
+
+        <div id="progress-area">
+            <div class="progress-bar-wrap">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Processing...</div>
+        </div>
+
+        <div id="stats-row">
+            <div class="stat-card">
+                <div class="label">Total Employees</div>
+                <div class="value" id="st-emp">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Working Days</div>
+                <div class="value" id="st-days">0</div>
+            </div>
+            <div class="stat-card green">
+                <div class="label">Avg Attendance %</div>
+                <div class="value" id="st-att">0%</div>
+            </div>
+            <div class="stat-card red">
+                <div class="label">Total Absences</div>
+                <div class="value" id="st-abs">0</div>
+            </div>
+        </div>
+
+        <div id="table-wrap">
+            <div class="table-header">
+                <h2>Attendance Records</h2>
+                <input class="search-box" type="text" placeholder="Search employee or ID..." oninput="applyFilters()"
+                    id="search">
+            </div>
+            <div class="filter-row">
+                <select class="filter-select" id="f-branch" onchange="applyFilters()">
+                    <option value="">All Branches</option>
+                </select>
+                <select class="filter-select" id="f-dept" onchange="applyFilters()">
+                    <option value="">All Departments</option>
+                </select>
+                <select class="filter-select" id="f-status" onchange="applyFilters()">
+                    <option value="">All Status</option>
+                    <option value="Present">Present</option>
+                    <option value="Late">Late</option>
+                    <option value="Absent">Absent</option>
+                    <option value="Half Day">Half Day</option>
+                </select>
+                <label class="date-label">From: <input type="date" class="search-box date-input" id="date-from"
+                        onchange="applyFilters()"></label>
+                <label class="date-label">To: <input type="date" class="search-box date-input" id="date-to"
+                        onchange="applyFilters()"></label>
+            </div>
+            <div class="table-scroll">
+                <table id="main-table">
+                    <thead>
+                        <tr>
+                            <th onclick="sortBy('name')">Employee ↕</th>
+                            <th onclick="sortBy('branch')">Branch ↕</th>
+                            <th onclick="sortBy('department')">Department ↕</th>
+                            <th onclick="sortBy('date')">Date ↕</th>
+                            <th onclick="sortBy('day')">Day ↕</th>
+                            <th onclick="sortBy('shiftDisplay')">Shift ↕</th>
+                            <th onclick="sortBy('firstIn')">First In ↕</th>
+                            <th onclick="sortBy('lastOut')">Last Out ↕</th>
+                            <th onclick="sortBy('hoursWorked')">Hours ↕</th>
+                            <th onclick="sortBy('status')">Status ↕</th>
+                            <th onclick="sortBy('lateBy')">Late By ↕</th>
+                            <th onclick="sortBy('earlyBy')">Early Out ↕</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body"></tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <span id="page-info">Showing 0–0 of 0 records</span>
+                <div class="page-btns" id="page-btns"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
