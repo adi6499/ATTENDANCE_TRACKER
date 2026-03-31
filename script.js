@@ -301,9 +301,8 @@ function buildReport(){
 
 function detectMachineFailures(){
   const r=S.records; if(!r.length)return;
-  const grouped={};
+  const grouped={}; 
   r.forEach(x=>{
-    // Group by Date AND Branch for smarter detection
     const bk=x.date+'|'+(x.branch||'Default');
     if(!grouped[bk])grouped[bk]={total:0,absent:0,date:x.date,branch:x.branch};
     grouped[bk].total++;
@@ -314,10 +313,11 @@ function detectMachineFailures(){
   Object.keys(grouped).forEach(bk=>{
     const g=grouped[bk];
     const rate=g.absent/g.total;
-    // Lower threshold: if >30% branch is missing on a weekday, it's a failure
     const dy=new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
-    if(rate >= 0.3 && dy!=='Sun'){
-       if(!S.failureDates.includes(g.date))S.failureDates.push(g.date);
+    
+    // Strict Branch-wise detection: 15% missing on a weekday.
+    if(dy!=='Sun' && rate >= 0.15){
+       S.failureDates.push({date:g.date, branch:g.branch});
        r.forEach(x=>{
          if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
            x.status='System Error';
@@ -366,10 +366,16 @@ function renderInsights(){
       <div class="insight-icon">🎯</div>
       <div class="insight-txt"><strong>Stability Score:</strong> Total workplace attendance is at <strong>${totalAtt}%</strong>. ${totalAtt>85?'Very healthy!':'Check for blockages.'}</div>
     </div>
+    ${S.failureDates.length ? `
+    <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
+      <div class="insight-icon">🚨</div>
+      <div class="insight-txt"><strong>Branch Anomalies:</strong> <strong>${S.failureDates.length} incidents</strong> detected across ${[...new Set(S.failureDates.map(f=>f.branch))].length} branches. Reclassified as System Error.</div>
+    </div>` : `
     <div class="insight-item">
       <div class="insight-icon">🕒</div>
       <div class="insight-txt"><strong>Punctuality:</strong> <strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline!':'Review shift overlaps.'}</div>
     </div>
+    `}
   `;
 }
 
@@ -500,10 +506,12 @@ function goPage(p){const pages=Math.ceil(S.filtered.length/S.perPage);if(p>=1&&p
 function renderStats(recs){
   const empSet=new Set(recs.map(r=>r.uid));
   const dateSet=new Set(recs.map(r=>r.date));
-  const present=recs.filter(r=>r.status!=='Absent').length;
+  const present=recs.filter(r=>['Present','Late','Late (Comp)'].includes(r.status)).length;
   const late=recs.filter(r=>r.lateMins>0).length;
   const absent=recs.filter(r=>r.status==='Absent').length;
-  const pct=recs.length?Math.round(present/recs.length*100):0;
+  // Use non-system-error total for accurate attendance KPI
+  const validRecs=recs.filter(r=>r.status!=='System Error').length;
+  const pct=validRecs?Math.round(present/validRecs*100):0;
   document.getElementById('st-emp').textContent=empSet.size;
   document.getElementById('st-emp-sub').textContent=recs.length+' total records';
   document.getElementById('st-days').textContent=dateSet.size;
@@ -526,11 +534,13 @@ function renderSummary(){
   S.records.forEach(r=>{
     if(!map[r.uid])map[r.uid]={uid:r.uid,name:r.name,branch:r.branch,dept:r.department,
       present:0,late:0,half:0,absent:0,days:0,hrs:0};
-    const s=map[r.uid];s.days++;s.hrs+=r.hoursWorked;
+    const s=map[r.uid]; s.hrs+=r.hoursWorked;
+    if(r.status==='System Error')return;
+    s.days++;
     if(r.status==='Present')s.present++;
-    else if(r.status==='Late'){s.present++;s.late++}
+    else if(r.status==='Late'||r.status==='Late (Comp)'){s.present++;s.late++}
     else if(r.status==='Half Day')s.half++;
-    else s.absent++;
+    else if(r.status==='Absent')s.absent++;
   });
   let emps=Object.values(map);
   if(q)emps=emps.filter(e=>e.name.toLowerCase().includes(q)||e.uid.includes(q));
