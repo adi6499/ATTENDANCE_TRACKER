@@ -1,387 +1,602 @@
-const state = { excelFiles: [], datFiles: [], shiftMap: {}, records: [], filtered: [], sortCol: 'date', sortDir: 1, page: 1, perPage: 50 };
-
-// INITIALIZE ON LOAD
-window.onload = () => {
-    const isDark = localStorage.getItem('theme') === 'dark';
-    if (isDark) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-        document.getElementById('theme-btn').textContent = '☀️';
-    }
-
-    // AUTO-LOAD PERSISTED DATA
-    const savedData = localStorage.getItem('hr_report_records');
-    if (savedData) {
-        try {
-            state.records = JSON.parse(savedData);
-            document.getElementById('steps-container').style.display = 'none'; // Hide upload
-            document.getElementById('btn-gen').style.display = 'none'; // Hide generate button
-
-            finishUIBuild();
-        } catch (e) {
-            console.error("Failed to load saved data", e);
-        }
-    }
+const S={
+  excelFiles:[],datFiles:[],shiftMap:{},
+  records:[],filtered:[],
+  sortCol:'date',sortDir:1,
+  page:1,perPage:100,
+  lateRecs:[],absentRecs:[],earlyRecs:[],
+  holidays:[
+    {name:"Makarsankranti",d:"2026-01-14",b:["Gujarat"]},
+    {name:"Republic Day",d:"2026-01-26",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Rang Panchami",d:"2026-03-03",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Gudi Padwa",d:"2026-03-19",b:["Mumbai","Borivali","Nagpur"]},
+    {name:"Maharashtra/Gujarat Day",d:"2026-05-01",b:["Mumbai","Borivali","Nagpur","Gujarat"]},
+    {name:"Independence Day",d:"2026-08-15",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Rakshabandhan",d:"2026-08-28",b:["Mumbai","Borivali","Nagpur","Gujarat"]},
+    {name:"Gokulashtami",d:"2026-09-04",b:["Mumbai","Borivali","Nagpur"]},
+    {name:"Ganesh Chaturthi",d:"2026-09-14",d2:"2026-09-15",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Anant Chaturthi",d:"2026-09-25",b:["Mumbai","Borivali","Nagpur"]},
+    {name:"Gandhi Jayanti",d:"2026-10-02",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Dussehra",d:"2026-10-20",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Jinharsh Diwali Celebration",d:"2026-11-07",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Narak Chaturdashi/Laxmi Pujan",d:"2026-11-08",b:["Mumbai","Borivali","Gujarat"]},
+    {name:"Diwali",d:"2026-11-09",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
+    {name:"Gujarati New Year / Padwa",d:"2026-11-10",b:["Mumbai","Borivali","Nagpur","Gujarat"]},
+    {name:"Bhai Duj",d:"2026-11-11",b:["Mumbai","Borivali","Nagpur","Gujarat"]},
+    {name:"Diwali Holidays",d:"2026-11-12",d2:"2026-11-14",b:["Gujarat"]},
+    {name:"Goa Liberation Day",d:"2026-12-19",b:["Goa"]},
+    {name:"Christmas",d:"2026-12-25",b:["Goa"]}
+  ],
+  failureDates:[]
 };
 
-function toggleTheme() {
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
-    document.getElementById('theme-btn').textContent = isDark ? '🌙' : '☀️';
-    localStorage.setItem('theme', isDark ? 'light' : 'dark');
+window.onload=()=>{
+  if(localStorage.getItem('theme')==='dark'){
+    document.documentElement.setAttribute('data-theme','dark');
+    document.getElementById('theme-btn').textContent='☀️';
+  }
+  const saved=localStorage.getItem('hr_att_v3');
+  if(saved){
+    try{
+      S.records=JSON.parse(saved);
+      document.getElementById('upload-section').style.display='none';
+      document.getElementById('btn-gen').style.display='none';
+      document.getElementById('btn-clear').style.display='flex';
+      buildReport();
+    }catch(e){localStorage.removeItem('hr_att_v3')}
+  }
+};
+
+function toggleTheme(){
+  const d=document.documentElement.getAttribute('data-theme')==='dark';
+  document.documentElement.setAttribute('data-theme',d?'light':'dark');
+  document.getElementById('theme-btn').textContent=d?'🌙':'☀️';
+  localStorage.setItem('theme',d?'light':'dark');
+}
+function clearData(){
+  if(!confirm('Clear all data and restart?'))return;
+  localStorage.removeItem('hr_att_v3');location.reload();
 }
 
-function clearData() {
-    if (confirm("Are you sure you want to clear the data? You will need to re-upload your files.")) {
-        localStorage.removeItem('hr_report_records');
-        location.reload();
-    }
+function handleFiles(files,type){
+  (type==='excel'?S.excelFiles:S.datFiles).push(...files);
+  renderPills(type);checkReady();
+}
+function dzDrag(e,id){e.preventDefault();document.getElementById(id).classList.add('drag-over')}
+function dzLeave(id){document.getElementById(id).classList.remove('drag-over')}
+function dzDrop(e,type){
+  e.preventDefault();
+  document.getElementById(type==='excel'?'dz-excel':'dz-dat').classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files,type);
+}
+function removeFile(type,idx){
+  (type==='excel'?S.excelFiles:S.datFiles).splice(idx,1);
+  renderPills(type);checkReady();
+}
+function renderPills(type){
+  const arr=type==='excel'?S.excelFiles:S.datFiles;
+  document.getElementById('fl-'+type).innerHTML=arr.map((f,i)=>
+    `<div class="pill"><span>📄 ${f.name}</span><button class="pill-rm" onclick="removeFile('${type}',${i})">×</button></div>`
+  ).join('');
+}
+function checkReady(){
+  document.getElementById('btn-gen').disabled=!(S.excelFiles.length&&S.datFiles.length);
 }
 
-function handleFiles(files, type) {
-    const arr = Array.from(files);
-    if (type === 'excel') state.excelFiles.push(...arr);
-    else state.datFiles.push(...arr);
-    renderPills(type); checkReady();
+function setProg(pct,msg){
+  document.getElementById('prog-wrap').style.display='block';
+  document.getElementById('prog-fill').style.width=pct+'%';
+  document.getElementById('prog-pct').textContent=pct+'%';
+  document.getElementById('prog-msg').textContent=msg;
 }
-function dzDrag(e, id) { e.preventDefault(); document.getElementById(id).classList.add('drag-over'); }
-function dzLeave(id) { document.getElementById(id).classList.remove('drag-over'); }
-function dzDrop(e, type) {
-    e.preventDefault(); document.getElementById(type === 'excel' ? 'dz-excel' : 'dz-dat').classList.remove('drag-over');
-    handleFiles(e.dataTransfer.files, type);
-}
-function renderPills(type) {
-    const arr = type === 'excel' ? state.excelFiles : state.datFiles;
-    document.getElementById('fl-' + type).innerHTML = arr.map((f, i) => `<div class="file-pill">📄 ${f.name} <button class="remove" onclick="removeFile('${type}',${i})">×</button></div>`).join('');
-}
-function removeFile(type, idx) { type === 'excel' ? state.excelFiles.splice(idx, 1) : state.datFiles.splice(idx, 1); renderPills(type); checkReady(); }
-function checkReady() { document.getElementById('btn-gen').disabled = !(state.excelFiles.length && state.datFiles.length); }
-function setProgress(pct, msg) { document.getElementById('progress-area').style.display = 'block'; document.getElementById('progress-bar').style.width = pct + '%'; document.getElementById('progress-text').textContent = msg; }
-function showError(msg) { const el = document.getElementById('error-box'); el.textContent = '⚠ ' + msg; el.style.display = 'block'; setTimeout(() => el.style.display = 'none', 6000); }
-
-async function parseShiftMaster(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = e => {
-            try {
-                const wb = XLSX.read(e.target.result, { type: 'array' });
-                const ws = wb.Sheets[wb.SheetNames[0]];
-                const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                const map = {}; let headerRow = 0;
-
-                for (let i = 0; i < Math.min(5, rows.length); i++) {
-                    const r = rows[i].map(c => String(c || '').toLowerCase());
-                    if (r.some(c => c.includes('userid') || c.includes('user id') || c.includes('emp code'))) { headerRow = i; break; }
-                }
-
-                const hdr = rows[headerRow].map(c => String(c || '').toLowerCase().trim());
-                const col = k => hdr.findIndex(h => h.includes(k));
-
-                const idCol = col('userid') !== -1 ? col('userid') : (col('user') !== -1 ? col('user') : col('emp code'));
-                const nameCol = col('particular') !== -1 ? col('particular') : col('name');
-                const branchCol = col('branch');
-                const deptCol = col('department') !== -1 ? col('department') : col('dept');
-                const startCol = col('shift start') !== -1 ? col('shift start') : col('start');
-                const endCol = col('shift end') !== -1 ? col('shift end') : col('end');
-
-                for (let i = headerRow + 1; i < rows.length; i++) {
-                    const r = rows[i]; const uid = r[idCol];
-                    if (!uid && !r[nameCol]) continue;
-
-                    const toTime = v => {
-                        if (!v) return null;
-                        if (v instanceof Date) return v.getHours() * 60 + v.getMinutes();
-                        if (typeof v === 'number') return Math.round(v * 24 * 60);
-                        const m = String(v).match(/(\d+):(\d+)/);
-                        return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
-                    };
-
-                    if (uid) {
-                        map[String(uid).trim()] = {
-                            name: r[nameCol] ? String(r[nameCol]).trim() : 'Unknown',
-                            branch: r[branchCol] ? String(r[branchCol]).trim() : '',
-                            department: r[deptCol] ? String(r[deptCol]).trim() : '',
-                            shiftStart: toTime(r[startCol]), shiftEnd: toTime(r[endCol])
-                        };
-                    }
-                }
-                resolve(map);
-            } catch (err) { reject(err); }
-        };
-        reader.readAsArrayBuffer(file);
-    });
+function hideProg(){document.getElementById('prog-wrap').style.display='none'}
+function showToast(msg){
+  const t=document.getElementById('toast');
+  document.getElementById('toast-msg').textContent=msg;
+  t.style.display='flex';setTimeout(()=>t.style.display='none',5000);
 }
 
-async function parseDatFile(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = e => {
-            const lines = e.target.result.split(/\r?\n/); const punches = [];
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                const parts = line.trim().split(/\s+/); if (parts.length < 2) continue;
-                const dateStr = (parts[1] && parts[2] && !parts[1].includes(' ')) ? parts[1] + ' ' + parts[2] : parts[1];
-                const d = new Date(dateStr);
-                if (!isNaN(d.getTime())) punches.push({ uid: String(parts[0]).trim(), datetime: d });
-            }
-            resolve(punches);
-        };
-        reader.readAsText(file);
-    });
-}
-
-async function generateReport() {
-    document.getElementById('error-box').style.display = 'none';
-    document.getElementById('btn-gen').disabled = true;
-
-    try {
-        setProgress(10, 'Reading shift master...');
-        state.shiftMap = {};
-        for (const f of state.excelFiles) Object.assign(state.shiftMap, await parseShiftMaster(f));
-
-        setProgress(30, 'Parsing attendance logs...');
-        let allPunches = [];
-        for (const f of state.datFiles) allPunches.push(...await parseDatFile(f));
-        if (!allPunches.length) throw new Error('No valid punch records found in .dat files.');
-
-        setProgress(55, 'Processing data...');
-        const grouped = {};
-        for (const p of allPunches) {
-            const dKey = p.datetime.toISOString().split('T')[0];
-            const key = p.uid + '|' + dKey;
-            if (!grouped[key]) grouped[key] = { uid: p.uid, date: dKey, punches: [] };
-            grouped[key].punches.push(p.datetime);
+async function parseShift(file){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>{
+      try{
+        const wb=XLSX.read(e.target.result,{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+        const map={};let hi=0;
+        for(let i=0;i<Math.min(6,rows.length);i++){
+          const r2=rows[i].map(c=>String(c||'').toLowerCase());
+          if(r2.some(c=>c.includes('userid')||c.includes('user id')||c.includes('emp'))){hi=i;break}
         }
-
-        state.records = [];
-        const fmtHHMM = mins => {
-            if (mins === null || isNaN(mins)) return '';
-            return Math.floor(mins / 60).toString().padStart(2, '0') + ':' + (mins % 60).toString().padStart(2, '0');
+        const hdr=rows[hi].map(c=>String(c||'').toLowerCase().trim());
+        const col=k=>hdr.findIndex(h=>h.includes(k));
+        const idC=col('userid')!==-1?col('userid'):col('user')!==-1?col('user'):col('emp');
+        const nmC=col('particular')!==-1?col('particular'):col('name');
+        const brC=col('branch'),dpC=col('department')!==-1?col('department'):col('dept');
+        const stC=col('shift start')!==-1?col('shift start'):col('start');
+        const enC=col('shift end')!==-1?col('shift end'):col('end');
+        const toMins=v=>{
+          if(v==null)return null;
+          if(v instanceof Date)return v.getHours()*60+v.getMinutes();
+          if(typeof v==='number')return Math.round(v*24*60);
+          const m=String(v).match(/(\d+):(\d+)/);
+          return m?parseInt(m[1])*60+parseInt(m[2]):null;
         };
-
-        for (const key of Object.keys(grouped)) {
-            const g = grouped[key];
-            const info = state.shiftMap[g.uid] || { name: 'User ' + g.uid, branch: '', department: '', shiftStart: null, shiftEnd: null };
-            const punches = g.punches.sort((a, b) => a - b);
-            const firstIn = punches[0], lastOut = punches[punches.length - 1];
-            const hoursWorked = ((lastOut - firstIn) / 3600000);
-
-            const inMins = firstIn.getHours() * 60 + firstIn.getMinutes();
-            const outMins = lastOut.getHours() * 60 + lastOut.getMinutes();
-
-            let lateBy = 0, earlyBy = 0, status = 'Present';
-            if (info.shiftStart !== null) {
-                lateBy = Math.max(0, inMins - info.shiftStart);
-                if (lateBy > 15) status = 'Late';
-            }
-            if (info.shiftEnd !== null) earlyBy = Math.max(0, info.shiftEnd - outMins);
-            if (hoursWorked < 4.5) status = 'Half Day';
-            if (hoursWorked < 1) status = 'Absent';
-
-            const fmtMins = m => (m <= 0) ? '—' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
-            const shiftDisplay = (info.shiftStart !== null && info.shiftEnd !== null) ? `${fmtHHMM(info.shiftStart)} - ${fmtHHMM(info.shiftEnd)}` : '—';
-
-            // GET DAY OF WEEK
-            const dayName = new Date(g.date).toLocaleDateString('en-US', { weekday: 'short' });
-
-            state.records.push({
-                uid: g.uid, name: info.name, branch: info.branch, department: info.department,
-                date: g.date, day: dayName, shiftDisplay, firstIn: fmtHHMM(inMins), lastOut: fmtHHMM(outMins),
-                hoursWorked: Math.round(hoursWorked * 100) / 100, status,
-                lateBy: lateBy > 0 ? fmtMins(lateBy) : '—', earlyBy: earlyBy > 0 ? fmtMins(earlyBy) : '—'
-            });
+        for(let i=hi+1;i<rows.length;i++){
+          const row=rows[i];const uid=row[idC];
+          if(!uid&&!row[nmC])continue;
+          if(uid)map[String(uid).trim()]={
+            name:row[nmC]?String(row[nmC]).trim():'User '+uid,
+            branch:row[brC]?String(row[brC]).trim():'',
+            department:row[dpC]?String(row[dpC]).trim():'',
+            shiftStart:toMins(row[stC]),shiftEnd:toMins(row[enC])
+          };
         }
-
-        setProgress(90, 'Saving Session...');
-
-        // SAVE TO PERSISTENCE (LOCAL STORAGE)
-        try {
-            localStorage.setItem('hr_report_records', JSON.stringify(state.records));
-        } catch (e) {
-            console.warn("Storage quota exceeded, session not saved.");
-        }
-
-        setProgress(100, `Done! ${state.records.length} records processed.`);
-
-        // HIDE FILE UPLOADS ON SUCCESS
-        document.getElementById('steps-container').style.display = 'none';
-        document.getElementById('btn-gen').style.display = 'none';
-        document.getElementById('progress-area').style.display = 'none';
-
-        finishUIBuild();
-
-    } catch (err) { showError(err.message || 'Failed to process files.'); console.error(err); document.getElementById('btn-gen').disabled = false; }
-}
-
-// Shared function for both Generate and Auto-Load
-function finishUIBuild() {
-    const branches = [...new Set(state.records.map(r => r.branch).filter(Boolean))].sort();
-    const depts = [...new Set(state.records.map(r => r.department).filter(Boolean))].sort();
-    document.getElementById('f-branch').innerHTML = '<option value="">All Branches</option>' + branches.map(v => `<option value="${v}">${v}</option>`).join('');
-    document.getElementById('f-dept').innerHTML = '<option value="">All Departments</option>' + depts.map(v => `<option value="${v}">${v}</option>`).join('');
-
-    state.filtered = [...state.records];
-    state.page = 1;
-
-    const statsRow = document.getElementById('stats-row');
-    const tableWrap = document.getElementById('table-wrap');
-
-    statsRow.style.display = 'grid';
-    tableWrap.style.display = 'block';
-    document.getElementById('btn-clear').style.display = 'flex';
-    document.getElementById('dl-wrap').style.display = 'flex';
-
-    // Trigger Animations
-    statsRow.classList.add('fade-in');
-    tableWrap.classList.add('fade-in', 'stagger-1');
-
-    applyFilters();
-}
-
-function applyFilters() {
-    const search = document.getElementById('search').value.toLowerCase();
-    const branch = document.getElementById('f-branch').value;
-    const dept = document.getElementById('f-dept').value;
-    const status = document.getElementById('f-status').value;
-
-    // STRICT DATE PARSING FOR UI & EXPORT
-    const fromVal = document.getElementById('date-from').value;
-    const toVal = document.getElementById('date-to').value;
-    let fromTime = -Infinity, toTime = Infinity;
-
-    if (fromVal) { const d = new Date(fromVal); if (!isNaN(d.getTime())) fromTime = d.setHours(0, 0, 0, 0); }
-    if (toVal) { const d = new Date(toVal); if (!isNaN(d.getTime())) toTime = d.setHours(23, 59, 59, 999); }
-
-    // GATING THE DOWNLOAD OPTION
-    const dlBtn = document.getElementById('btn-dl');
-    const dlMsg = document.getElementById('dl-msg');
-    if (fromVal && toVal) {
-        dlBtn.style.display = 'flex';
-        dlMsg.style.display = 'none';
-    } else {
-        dlBtn.style.display = 'none';
-        dlMsg.style.display = 'block';
-    }
-
-    state.filtered = state.records.filter(r => {
-        if (search && !(r.name.toLowerCase().includes(search) || r.uid.includes(search))) return false;
-        if (branch && r.branch !== branch) return false;
-        if (dept && r.department !== dept) return false;
-        if (status && r.status !== status) return false;
-        const rTime = new Date(r.date).getTime();
-        if (fromVal && rTime < fromTime) return false;
-        if (toVal && rTime > toTime) return false;
-        return true;
-    });
-    state.page = 1; renderTable(); renderStats(state.filtered);
-}
-
-function sortBy(col) {
-    state.sortDir = (state.sortCol === col) ? state.sortDir * -1 : 1;
-    state.sortCol = col;
-    state.filtered.sort((a, b) => {
-        let av = a[col] || '', bv = b[col] || '';
-        if (col === 'hoursWorked') return (av - bv) * state.sortDir;
-        return String(av).localeCompare(String(bv)) * state.sortDir;
-    });
-    renderTable();
-}
-
-function renderTable() {
-    const total = state.filtered.length, start = (state.page - 1) * state.perPage;
-    const rows = state.filtered.slice(start, start + state.perPage);
-    const statusBadge = s => {
-        const cls = { Present: 'present', Late: 'late', Absent: 'absent', 'Half Day': 'half' }[s] || 'present';
-        return `<span class="badge badge-${cls}">${s}</span>`;
+        res(map);
+      }catch(err){rej(err)}
     };
+    r.readAsArrayBuffer(file);
+  });
+}
 
-    document.getElementById('table-body').innerHTML = rows.map(r => `
-<tr>
-    <td data-label="Employee">
-        <div><strong>${r.name}</strong><br><span style="font-size:11px;color:var(--text3)">ID: ${r.uid}</span></div>
-        <div class="mobile-status" style="display:none;">${statusBadge(r.status)}</div>
-    </td>
-    <td data-label="Branch">${r.branch || '—'}</td>
-    <td data-label="Department">${r.department || '—'}</td>
-    <td data-label="Date">${r.date}</td>
-    <td data-label="Day">${r.day}</td>
-    <td data-label="Shift"><span class="shift-txt">${r.shiftDisplay}</span></td>
-    <td data-label="First In">${r.firstIn}</td>
-    <td data-label="Last Out">${r.lastOut}</td>
-    <td data-label="Hours" class="${r.hoursWorked >= 8 ? 'hours-ok' : r.hoursWorked >= 4 ? 'hours-low' : 'hours-zero'}">${r.hoursWorked}h</td>
-    <td data-label="Status">${statusBadge(r.status)}</td>
-    <td data-label="Late By" style="color:var(--amber);font-weight:500;">${r.lateBy}</td>
-    <td data-label="Early Out" style="color:var(--red)">${r.earlyBy}</td>
-</tr>
-`).join('');
+async function parseDat(file){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/);const ps=[];
+      for(const line of lines){
+        if(!line.trim())continue;
+        const pts=line.trim().split(/\s+/);if(pts.length<2)continue;
+        const ds=(pts[1]&&pts[2]&&!pts[1].includes(' '))?pts[1]+' '+pts[2]:pts[1];
+        const d=new Date(ds);
+        if(!isNaN(d.getTime()))ps.push({uid:String(pts[0]).trim(),dt:d});
+      }
+      res(ps);
+    };
+    r.onerror=rej;
+    r.readAsText(file);
+  });
+}
 
-    if (window.innerWidth <= 768) { document.querySelectorAll('.mobile-status').forEach(el => el.style.display = 'block'); }
-
-    document.getElementById('page-info').textContent = total === 0 ? 'No records' : `Showing ${start + 1}–${Math.min(start + state.perPage, total)} of ${total} records`;
-
-    const pages = Math.ceil(total / state.perPage); let html = '';
-    if (pages > 1) {
-        html += `<button class="page-btn" onclick="goPage(${state.page - 1})" ${state.page === 1 ? 'disabled' : ''}>‹</button>`;
-        for (let i = 1; i <= pages; i++) {
-            if (i === 1 || i === pages || Math.abs(i - state.page) <= 1) html += `<button class="page-btn ${i === state.page ? 'active' : ''}" onclick="goPage(${i})">${i}</button>`;
-            else if (i === state.page - 2 || i === state.page + 2) html += `<span class="page-btn" style="cursor:default">…</span>`;
+async function generateReport(){
+  document.getElementById('toast').style.display='none';
+  document.getElementById('btn-gen').disabled=true;
+  try{
+    setProg(10,'Reading shift master…');
+    S.shiftMap={};
+    for(const f of S.excelFiles)Object.assign(S.shiftMap,await parseShift(f));
+    setProg(30,'Parsing attendance logs…');
+    let punches=[];
+    for(const f of S.datFiles)punches.push(...await parseDat(f));
+    if(!punches.length)throw new Error('No valid punch records found in the uploaded files.');
+    setProg(55,'Calculating attendance…');
+    const grouped={};
+    for(const p of punches){
+      const dk=p.dt.toISOString().split('T')[0];
+      const key=p.uid+'|'+dk;
+      if(!grouped[key])grouped[key]={uid:p.uid,date:dk,punches:[]};
+      grouped[key].punches.push(p.dt);
+    }
+    const allPunchedDates=punches.map(p=>p.dt.getTime());
+    let minD=new Date(Math.min(...allPunchedDates)), maxD=new Date(Math.max(...allPunchedDates));
+    
+    // SAFETY GUARD: If logs span too many years, limit "Full Calendar Filling" to current month only.
+    if((maxD.getTime()-minD.getTime()) > (62*24*60*60*1000)){
+       minD=new Date(maxD.getFullYear(), maxD.getMonth(), 1);
+    }
+    
+    const dts=[];
+    for(let d=new Date(minD); d<=maxD; d.setDate(d.getDate()+1)){
+      dts.push(d.toISOString().split('T')[0]);
+    }
+    const uids=[...new Set([...Object.keys(S.shiftMap), ...punches.map(p=>p.uid)])];
+    const pad2=n=>String(n).padStart(2,'0');
+    const m2t=m=>m==null||isNaN(m)?'—':pad2(Math.floor(m/60))+':'+pad2(m%60);
+    const fmtD=m=>m<=0?'—':(Math.floor(m/60)?Math.floor(m/60)+'h ':'')+((m%60)?m%60+'m':'');
+    
+    S.records=[];
+    for(const dt of dts){
+      for(const uid of uids){
+        const k=uid+'|'+dt;
+        const g=grouped[k];
+        const info=S.shiftMap[uid]||{name:'User '+uid,branch:'',department:'',shiftStart:null,shiftEnd:null};
+        const ps=g?g.punches.sort((a,b)=>a-b):[];
+        
+        const dy=new Date(dt+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+        const sd=(info.shiftStart!==null&&info.shiftEnd!==null)?m2t(info.shiftStart)+' – '+m2t(info.shiftEnd):'—';
+        
+        let first=null,last=null,hrs=0,inM=null,outM=null,status='Absent',lateMins=0,earlyMins=0,otMins=0;
+        const sDur=(info.shiftStart!==null&&info.shiftEnd!==null)?(info.shiftEnd-info.shiftStart):480;
+        
+        const isHol=S.holidays.find(h=>{
+          const bMatch=h.b.some(b=>info.branch.includes(b));
+          if(!bMatch)return false;
+          if(h.d2)return dt>=h.d&&dt<=h.d2;
+          return dt===h.d;
+        });
+        
+        if(ps.length===0){
+          if(isHol)status='Holiday';
+          else if(dy==='Sun')status='Week Off';
         }
-        html += `<button class="page-btn" onclick="goPage(${state.page + 1})" ${state.page === pages ? 'disabled' : ''}>›</button>`;
+
+        if(ps.length>0){
+          first=ps[0];last=ps[ps.length-1];
+          hrs=(last-first)/3600000;
+          inM=first.getHours()*60+first.getMinutes();
+          outM=last.getHours()*60+last.getMinutes();
+          status='Present';
+          if(info.shiftStart!==null){lateMins=Math.max(0,inM-info.shiftStart);if(lateMins>15)status='Late'}
+          if(info.shiftEnd!==null)earlyMins=Math.max(0,info.shiftEnd-outM);
+          if(hrs<4.5)status='Half Day';
+          if(hrs<0.25 || ps.length===1)status='Missed Punch';
+          if(status!=='Missed Punch'){
+            otMins=Math.max(0,Math.round(hrs*60)-sDur);
+          }
+        }
+        
+        // Gap: For Absent it's full shift, for WeekOff/Holiday it's 0, for Present it's Dur - Actual
+        let gapMins=0;
+        if(status==='Absent')gapMins=sDur;
+        else if(status==='Present'||status==='Late'||status==='Late (Comp)'||status==='Half Day')gapMins=sDur-Math.round(hrs*60);
+        
+        if(status==='Late'&&gapMins<=0)status='Late (Comp)';
+        
+        const gapFmt=gapMins===0?'0m':fmtD(Math.abs(gapMins));
+        const gapClass=gapMins<=0?'g-ok':'g-err';
+        
+        S.records.push({
+          uid,name:info.name,branch:info.branch,department:info.department,
+          date:dt,day:dy,shiftDisplay:sd,
+          firstIn:ps.length?m2t(inM):'—',lastOut:ps.length?m2t(outM):'—',
+          hoursWorked:Math.round(hrs*100)/100,status,
+          lateMins,earlyMins,lateBy:fmtD(lateMins),earlyBy:fmtD(earlyMins),
+          otMins,overtime:fmtD(otMins),punchCount:ps.length,
+          gapMins,gapFmt,gapClass
+        });
+      }
     }
-    document.getElementById('page-btns').innerHTML = html;
+    setProg(90,'Saving session…');
+    try{localStorage.setItem('hr_att_v3',JSON.stringify(S.records))}catch(e){}
+    setProg(100,`Done — ${S.records.length} records processed.`);
+    setTimeout(hideProg,1200);
+    document.getElementById('upload-section').style.display='none';
+    document.getElementById('btn-gen').style.display='none';
+    document.getElementById('btn-clear').style.display='flex';
+    buildReport();
+  }catch(err){
+    showToast(err.message||'Processing failed.');
+    console.error(err);
+    document.getElementById('btn-gen').disabled=false;
+    hideProg();
+  }
 }
 
-function goPage(p) { if (p >= 1 && p <= Math.ceil(state.filtered.length / state.perPage)) { state.page = p; renderTable(); } }
-
-function renderStats(records) {
-    const present = records.filter(r => r.status !== 'Absent').length;
-    document.getElementById('st-emp').textContent = new Set(records.map(r => r.uid)).size;
-    document.getElementById('st-days').textContent = new Set(records.map(r => r.date)).size;
-    document.getElementById('st-att').textContent = records.length ? Math.round(present / records.length * 100) + '%' : '0%';
-    document.getElementById('st-abs').textContent = records.length - present;
+function buildReport(){
+  detectMachineFailures();
+  const uniq=k=>[...new Set(S.records.map(r=>r[k]).filter(Boolean))].sort();
+  const fill=(id,vals)=>{
+    const el=document.getElementById(id);
+    el.innerHTML='<option value="">'+el.options[0].text+'</option>'+vals.map(v=>`<option value="${v}">${v}</option>`).join('');
+  };
+  fill('f-branch',uniq('branch'));fill('f-dept',uniq('department'));
+  const emps=[...new Set(S.records.map(r=>`${r.uid}|${r.name}`))].sort().map(e=>{const[uid,nm]=e.split('|');return{uid,name:nm}});
+  document.getElementById('f-emp').innerHTML='<option value="">All Employees</option>'+emps.map(e=>`<option value="${e.uid}">${e.name} (${e.uid})</option>`).join('');
+  
+  S.lateRecs=S.records.filter(r=>r.lateMins>0);
+  S.absentRecs=S.records.filter(r=>r.status==='Absent');
+  S.earlyRecs=S.records.filter(r=>r.earlyMins>0);
+  document.getElementById('dl-wrap').style.display='flex';
+  document.getElementById('stats-row').style.display='grid';
+  document.getElementById('tabs-row').style.display='flex';
+  document.getElementById('tab-daily').style.display='block';
+  document.getElementById('tb-daily').textContent=S.records.length;
+  document.getElementById('tb-summary').textContent=[...new Set(S.records.map(r=>r.uid))].size;
+  document.getElementById('tb-late').textContent=S.lateRecs.length;
+  document.getElementById('tb-absent').textContent=S.absentRecs.length;
+  document.getElementById('tb-early').textContent=S.earlyRecs.length;
+  S.filtered=[...S.records];S.page=1;
+  renderStats(S.records);renderTable();renderSubTables();renderInsights();
 }
 
-function downloadExcel() {
-    const dataToExport = state.filtered;
-    if (dataToExport.length === 0) return showError("No data available to download.");
-
-    const wb = XLSX.utils.book_new();
-
-    // 1. SUMMARY SHEET
-    const summaryData = {};
-    dataToExport.forEach(r => {
-        if (!summaryData[r.uid]) summaryData[r.uid] = { 'ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Dept': r.department, 'Present': 0, 'Late': 0, 'Half Day': 0, 'Absent': 0, 'Days': 0, '_hrs': 0 };
-        const s = summaryData[r.uid];
-        s['Days']++; s['_hrs'] += r.hoursWorked;
-        if (r.status === 'Present') s['Present']++; else if (r.status === 'Late') { s['Present']++; s['Late']++; } else if (r.status === 'Half Day') s['Half Day']++; else s['Absent']++;
-    });
-    const summaryRows = Object.values(summaryData).map(s => { s['Avg Hrs'] = Math.round(s['_hrs'] / s['Days'] * 100) / 100; s['Att %'] = Math.round(s['Present'] / s['Days'] * 100) + '%'; delete s['_hrs']; return s; });
-    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
-    wsSummary['!cols'] = [8, 20, 15, 15, 8, 8, 9, 8, 8, 8, 8].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-
-    // 2. DAILY DETAIL SHEET (ADDED DAY COLUMN)
-    const detailRows = dataToExport.map(r => ({ 'ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Dept': r.department, 'Date': r.date, 'Day': r.day, 'Shift': r.shiftDisplay, 'First In': r.firstIn, 'Last Out': r.lastOut, 'Hours': r.hoursWorked, 'Status': r.status, 'Late By': r.lateBy, 'Early Out': r.earlyBy }));
-    const wsDetail = XLSX.utils.json_to_sheet(detailRows);
-    wsDetail['!cols'] = [8, 20, 15, 15, 12, 6, 13, 10, 10, 8, 10, 10, 10].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, wsDetail, 'Daily Detail');
-
-    // 3. LATE REPORT (ADDED DAY COLUMN)
-    const lateData = dataToExport.filter(r => r.status === 'Late' || r.lateBy !== '—');
-    if (lateData.length) {
-        const wsLate = XLSX.utils.json_to_sheet(lateData.map(r => ({ 'ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Date': r.date, 'Day': r.day, 'Shift': r.shiftDisplay, 'First In': r.firstIn, 'Late By': r.lateBy })));
-        wsLate['!cols'] = [8, 20, 15, 12, 6, 13, 10, 10].map(w => ({ wch: w }));
-        XLSX.utils.book_append_sheet(wb, wsLate, 'Late Report');
+function detectMachineFailures(){
+  const r=S.records; if(!r.length)return;
+  const grouped={};
+  r.forEach(x=>{
+    // Group by Date AND Branch for smarter detection
+    const bk=x.date+'|'+(x.branch||'Default');
+    if(!grouped[bk])grouped[bk]={total:0,absent:0,date:x.date,branch:x.branch};
+    grouped[bk].total++;
+    if(x.status==='Absent')grouped[bk].absent++;
+  });
+  
+  S.failureDates=[];
+  Object.keys(grouped).forEach(bk=>{
+    const g=grouped[bk];
+    const rate=g.absent/g.total;
+    // Lower threshold: if >30% branch is missing on a weekday, it's a failure
+    const dy=new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+    if(rate >= 0.3 && dy!=='Sun'){
+       if(!S.failureDates.includes(g.date))S.failureDates.push(g.date);
+       r.forEach(x=>{
+         if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
+           x.status='System Error';
+           x.gapMins=0; x.gapFmt='0m'; x.gapClass='g-ok';
+         }
+       });
     }
+  });
+}
 
-    // 4. ABSENT REPORT (ADDED DAY COLUMN)
-    const absentData = dataToExport.filter(r => r.status === 'Absent');
-    if (absentData.length) {
-        const wsAbsent = XLSX.utils.json_to_sheet(absentData.map(r => ({ 'ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Date': r.date, 'Day': r.day, 'Status': 'Absent' })));
-        wsAbsent['!cols'] = [8, 20, 15, 12, 6, 10].map(w => ({ wch: w }));
-        XLSX.utils.book_append_sheet(wb, wsAbsent, 'Absent Report');
+function quickFilter(s){
+  document.getElementById('f-status').value=s;
+  switchTab('daily', document.querySelector('[onclick*="switchTab(\'daily\'"]'));
+  applyFilters();
+}
+
+function renderInsights(){
+  const r=S.records; if(!r.length)return;
+  const ins=document.getElementById('insights-panel'); ins.style.display='grid';
+  const dash=v=>v||'<span class="dash">—</span>';
+  
+  // Logic: Top Branch (Highest Attendance %)
+  const brData={}; 
+  r.forEach(x=>{
+    if(!x.branch)return;
+    if(!brData[x.branch])brData[x.branch]={days:0,present:0};
+    brData[x.branch].days++;
+    if(x.status==='Present'||x.status==='Late')brData[x.branch].present++;
+  });
+  let topBr='', topPct=-1;
+  Object.keys(brData).forEach(b=>{
+    const pct=Math.round((brData[b].present/brData[b].days)*100);
+    if(pct>topPct){topPct=pct; topBr=b;}
+  });
+
+  // Logic: Lateness Trend
+  const latePct=Math.round((S.lateRecs.length/r.length)*100);
+  const totalAtt=Math.round((r.filter(x=>x.status==='Present'||x.status==='Late').length/r.length)*100);
+
+  ins.innerHTML=`
+    <div class="insight-item">
+      <div class="insight-icon">🏆</div>
+      <div class="insight-txt"><strong>Top Branch:</strong> <strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div>
+    </div>
+    <div class="insight-item">
+      <div class="insight-icon">🎯</div>
+      <div class="insight-txt"><strong>Stability Score:</strong> Total workplace attendance is at <strong>${totalAtt}%</strong>. ${totalAtt>85?'Very healthy!':'Check for blockages.'}</div>
+    </div>
+    <div class="insight-item">
+      <div class="insight-icon">🕒</div>
+      <div class="insight-txt"><strong>Punctuality:</strong> <strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline!':'Review shift overlaps.'}</div>
+    </div>
+  `;
+}
+
+function switchTab(name,btn){
+  ['daily','summary','late','absent','early'].forEach(t=>document.getElementById('tab-'+t).style.display=t===name?'block':'none');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  if(name==='summary')renderSummary();
+}
+
+function applyFilters(){
+  const q=document.getElementById('search').value.toLowerCase();
+  const branch=document.getElementById('f-branch').value;
+  const dept=document.getElementById('f-dept').value;
+  const status=document.getElementById('f-status').value;
+  const empId=document.getElementById('f-emp').value;
+  const fv=document.getElementById('date-from').value;
+  const tv=document.getElementById('date-to').value;
+  const hasDates=fv&&tv;
+  document.getElementById('btn-dl').style.display=hasDates?'inline-flex':'none';
+  document.getElementById('dl-gate').style.display=hasDates?'none':'inline-flex';
+  let from=-Infinity,to=Infinity;
+  if(fv)from=new Date(fv).setHours(0,0,0,0);
+  if(tv)to=new Date(tv).setHours(23,59,59,999);
+  
+  S.filtered=S.records.filter(r=>{
+    if(q&&!(r.name.toLowerCase().includes(q)||r.uid.includes(q)))return false;
+    if(branch&&r.branch!==branch)return false;
+    if(dept&&r.department!==dept)return false;
+    if(status&&r.status!==status)return false;
+    if(empId&&r.uid!==empId)return false;
+    const rt=new Date(r.date).getTime();
+    if(fv&&rt<from)return false;
+    if(tv&&rt>to)return false;
+    return true;
+  });
+  
+  S.lateRecs=S.filtered.filter(r=>r.lateMins>0);
+  S.absentRecs=S.filtered.filter(r=>r.status==='Absent');
+  S.earlyRecs=S.filtered.filter(r=>r.earlyMins>0);
+  
+  document.getElementById('tb-daily').textContent=S.filtered.length;
+  document.getElementById('tb-summary').textContent=[...new Set(S.filtered.map(r=>r.uid))].size;
+  document.getElementById('tb-late').textContent=S.lateRecs.length;
+  document.getElementById('tb-absent').textContent=S.absentRecs.length;
+  document.getElementById('tb-early').textContent=S.earlyRecs.length;
+  
+  S.page=1;renderStats(S.filtered);renderTable();
+  renderSubTables();renderSummary();
+  
+  document.getElementById('daily-title').textContent=
+    S.filtered.length===S.records.length?'Daily Attendance Records':`Daily Attendance Records (${S.filtered.length} filtered)`;
+}
+
+function sortBy(col){
+  S.sortDir=S.sortCol===col?S.sortDir*-1:1;S.sortCol=col;
+  S.filtered.sort((a,b)=>{
+    const av=a[col]??'',bv=b[col]??'';
+    if(['hoursWorked','lateMins','earlyMins','gapMins'].includes(col))return(Number(av)-Number(bv))*S.sortDir;
+    return String(av).localeCompare(String(bv))*S.sortDir;
+  });
+  renderTable();
+}
+function sortSub(type,col){
+  const arr=type==='late'?S.lateRecs:type==='absent'?S.absentRecs:S.earlyRecs;
+  arr.sort((a,b)=>['lateMins','earlyMins'].includes(col)?(Number(a[col]||0)-Number(b[col]||0)):String(a[col]||'').localeCompare(String(b[col]||'')));
+  renderSubTables();
+}
+
+function renderTable(){
+  const total=S.filtered.length,start=(S.page-1)*S.perPage;
+  const slice=S.filtered.slice(start,start+S.perPage);
+  const bdg=s=>{const m={Present:'present',Late:'late',Absent:'absent','Half Day':'half','Missed Punch':'missed','Week Off':'weekoff','Holiday':'holiday','Late (Comp)':'late-comp','System Error':'syserr'};return`<span class="badge b-${m[s]||'present'}">${s}</span>`};
+  const hc=h=>h>=8?'h-ok':h>=4?'h-low':'h-zero';
+  document.getElementById('table-body').innerHTML=slice.map((r,i)=>`
+<tr onclick="toggleExp(${start+i})" id="row-${start+i}" style="animation-delay: ${i*0.04}s">
+  <td class="td-emp" data-label="Employee"><strong>${r.name}</strong><small>ID ${r.uid}</small></td>
+  <td title="${r.branch}" data-label="Branch">${r.branch||'<span class="dash">—</span>'}</td>
+  <td title="${r.department}" data-label="Department">${r.department||'<span class="dash">—</span>'}</td>
+  <td class="mono" data-label="Date">${r.date}</td>
+  <td style="color:var(--ink3);font-size:12px" data-label="Day">${r.day}</td>
+  <td class="mono" data-label="In">${r.firstIn}</td>
+  <td class="mono" data-label="Out">${r.lastOut}</td>
+  <td class="mono ${hc(r.hoursWorked)}" data-label="Hours">${r.hoursWorked}h</td>
+  <td class="overtime-v" data-label="Overtime">${r.otMins>0?r.overtime:'<span class="dash">—</span>'}</td>
+  <td class="mono" data-label="Punches">${r.punchCount}</td>
+  <td data-label="Status">${bdg(r.status)}</td>
+  <td class="${r.gapClass}" data-label="Gap">${r.gapMins<=0?'-':''}${r.gapFmt}</td>
+  <td class="late-v" data-label="Late By">${r.lateMins>0?r.lateBy:'<span class="dash">—</span>'}</td>
+  <td class="early-v" data-label="Early Out">${r.earlyMins>0?r.earlyBy:'<span class="dash">—</span>'}</td>
+</tr>
+<tr class="exp-row" id="exp-${start+i}">
+  <td class="exp-cell" colspan="14">
+    <div class="exp-inner">
+      <div class="exp-stat"><label>Shift</label><span>${r.shiftDisplay}</span></div>
+      <div class="exp-stat"><label>Total Punches</label><span>${r.punchCount}</span></div>
+      <div class="exp-stat"><label>Overtime</label><span class="overtime-v">${r.otMins>0?r.overtime:'0m'}</span></div>
+      <div class="exp-stat"><label>Hours Worked</label><span class="${hc(r.hoursWorked)}">${r.hoursWorked}h</span></div>
+      <div class="exp-stat"><label>Department</label><span>${r.department||'—'}</span></div>
+      <div class="exp-stat"><label>Branch</label><span>${r.branch||'—'}</span></div>
+    </div>
+  </td>
+</tr>`).join('');
+  const end=Math.min(start+S.perPage,total);
+  document.getElementById('page-info').textContent=total===0?'No records':`Showing ${start+1}–${end} of ${total} records`;
+  const pages=Math.ceil(total/S.perPage);let html='';
+  if(pages>1){
+    html+=`<button class="pBtn" onclick="goPage(${S.page-1})" ${S.page===1?'disabled':''}>‹</button>`;
+    for(let i=1;i<=pages;i++){
+      if(i===1||i===pages||Math.abs(i-S.page)<=1)html+=`<button class="pBtn ${i===S.page?'active':''}" onclick="goPage(${i})">${i}</button>`;
+      else if(i===S.page-2||i===S.page+2)html+=`<button class="pBtn" style="pointer-events:none">…</button>`;
     }
+    html+=`<button class="pBtn" onclick="goPage(${S.page+1})" ${S.page===pages?'disabled':''}>›</button>`;
+  }
+  document.getElementById('page-ctrls').innerHTML=html;
+}
 
-    const from = document.getElementById('date-from').value;
-    const to = document.getElementById('date-to').value;
-    XLSX.writeFile(wb, `HR_Report_${from}_to_${to}.xlsx`);
+function toggleExp(idx){
+  const row=document.getElementById('row-'+idx);
+  const exp=document.getElementById('exp-'+idx);
+  const open=exp.classList.contains('open');
+  document.querySelectorAll('.exp-row.open').forEach(r=>r.classList.remove('open'));
+  document.querySelectorAll('tbody tr.expanded').forEach(r=>r.classList.remove('expanded'));
+  if(!open){exp.classList.add('open');row.classList.add('expanded')}
+}
+function goPage(p){const pages=Math.ceil(S.filtered.length/S.perPage);if(p>=1&&p<=pages){S.page=p;renderTable()}}
+
+function renderStats(recs){
+  const empSet=new Set(recs.map(r=>r.uid));
+  const dateSet=new Set(recs.map(r=>r.date));
+  const present=recs.filter(r=>r.status!=='Absent').length;
+  const late=recs.filter(r=>r.lateMins>0).length;
+  const absent=recs.filter(r=>r.status==='Absent').length;
+  const pct=recs.length?Math.round(present/recs.length*100):0;
+  document.getElementById('st-emp').textContent=empSet.size;
+  document.getElementById('st-emp-sub').textContent=recs.length+' total records';
+  document.getElementById('st-days').textContent=dateSet.size;
+  document.getElementById('st-days-sub').textContent='unique dates';
+  document.getElementById('st-att').textContent=pct+'%';
+  document.getElementById('st-att-sub').textContent=present+' present days';
+  document.getElementById('st-late').textContent=late;
+  document.getElementById('st-late-sub').textContent=recs.length?Math.round(late/recs.length*100)+'% of records':'';
+  document.getElementById('st-abs').textContent=absent;
+  document.getElementById('st-abs-sub').textContent=recs.length?Math.round(absent/recs.length*100)+'% of records':'';
+}
+
+const CLR=['#1B4FD8','#0B7B60','#8A5A00','#5B3FA6','#C0280C','#3E4B66'];
+function avatarCol(n){return CLR[n.charCodeAt(0)%CLR.length]}
+function initials(n){return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+
+function renderSummary(){
+  const q=(document.getElementById('search-summary').value||'').toLowerCase();
+  const map={};
+  S.records.forEach(r=>{
+    if(!map[r.uid])map[r.uid]={uid:r.uid,name:r.name,branch:r.branch,dept:r.department,
+      present:0,late:0,half:0,absent:0,days:0,hrs:0};
+    const s=map[r.uid];s.days++;s.hrs+=r.hoursWorked;
+    if(r.status==='Present')s.present++;
+    else if(r.status==='Late'){s.present++;s.late++}
+    else if(r.status==='Half Day')s.half++;
+    else s.absent++;
+  });
+  let emps=Object.values(map);
+  if(q)emps=emps.filter(e=>e.name.toLowerCase().includes(q)||e.uid.includes(q));
+  emps.sort((a,b)=>a.name.localeCompare(b.name));
+  document.getElementById('summary-grid').innerHTML=emps.map((e,i)=>{
+    const p=e.days?Math.round(e.present/e.days*100):0;
+    const avg=e.days?Math.round(e.hrs/e.days*10)/10:0;
+    const col=avatarCol(e.name);
+    return `<div class="emp-card anim-fade" style="animation-delay: ${Math.min(i*0.05, 1)}s">
+      <div class="emp-card-head">
+        <div class="avatar" style="background:${col}22;color:${col}">${initials(e.name)}</div>
+        <div class="emp-card-info"><h4 title="${e.name}">${e.name}</h4><small>ID ${e.uid}</small></div>
+      </div>
+      <div class="emp-meta">${e.dept||'—'} · ${e.branch||'—'}</div>
+      <div class="att-bar-wrap"><div class="att-bar ${p<70?'low':''}" style="width:${p}%"></div></div>
+      <div class="emp-pct-row"><span>Attendance <strong style="color:var(--ink)">${p}%</strong></span><span>Avg <strong style="color:var(--ink)">${avg}h/day</strong></span></div>
+      <div class="emp-stats">
+        <div class="emp-stat"><span class="sv sv-p">${e.present}</span><span class="sl">Present</span></div>
+        <div class="emp-stat"><span class="sv sv-l">${e.late}</span><span class="sl">Late</span></div>
+        <div class="emp-stat"><span class="sv sv-h">${e.half}</span><span class="sl">Half</span></div>
+        <div class="emp-stat"><span class="sv sv-a">${e.absent}</span><span class="sl">Absent</span></div>
+      </div>
+    </div>`}).join('');
+}
+
+function renderSubTables(){
+  const h=t=>`<table class="${t}-table"><thead><tr><th class="c-emp">Employee</th><th class="c-br">Branch</th><th class="c-dp">Dept</th><th class="c-dt">Date</th><th class="c-dy">Day</th><th class="c-st">Shift</th><th class="c-lt">Details</th></tr></thead><tbody>`;
+  const r=(t,d)=>d.map((x,i)=>`<tr class="anim-fade" style="animation-delay: ${i*0.04}s"><td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td><td>${x.branch||'—'}</td><td>${x.department||'—'}</td><td class="mono">${x.date}</td><td style="color:var(--ink3);font-size:12px">${x.day}</td><td><span class="shift-chip">${x.shiftDisplay}</span></td><td class="${t==='late'?'late-v':'early-v'}">${t==='late'?(x.firstIn+' ('+x.lateBy+')'):(x.lastOut+' ('+x.earlyBy+')')}</td></tr>`).join('');
+
+  document.getElementById('late-body').innerHTML=S.lateRecs.length?h('late')+r('late',S.lateRecs.slice(0,50))+'</tbody></table>':'<div class="p-20">No late arrivals</div>';
+  document.getElementById('absent-body').innerHTML=S.absentRecs.length?h('absent')+S.absentRecs.slice(0,50).map((x,i)=>`<tr class="anim-fade" style="animation-delay: ${i*0.04}s"><td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td><td>${x.branch||'—'}</td><td>${x.department||'—'}</td><td class="mono">${x.date}</td><td style="color:var(--ink3);font-size:12px">${x.day}</td><td><span class="shift-chip">${x.shiftDisplay}</span></td><td><span class="badge b-absent">Absent</span></td></tr>`).join('')+'</tbody></table>':'<div class="p-20">No absences</div>';
+  document.getElementById('early-body').innerHTML=S.earlyRecs.length?h('early')+r('early',S.earlyRecs.slice(0,50))+'</tbody></table>':'<div class="p-20">No early departures</div>';
+}
+
+function downloadExcel(){
+  const data=S.filtered;
+  if(!data.length)return showToast('No records to export.');
+  const wb=XLSX.utils.book_new();
+  const sm={};
+  data.forEach(r=>{
+    if(!sm[r.uid])sm[r.uid]={'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,
+      'Total Days':0,'Present':0,'Late':0,'Half Day':0,'Absent':0,'Avg Hrs/Day':0,'Att %':'','_h':0};
+    const s=sm[r.uid];s['Total Days']++;s['_h']+=r.hoursWorked;
+    if(r.status==='Present')s['Present']++;
+    else if(r.status==='Late'){s['Present']++;s['Late']++}
+    else if(r.status==='Half Day')s['Half Day']++;
+    else s['Absent']++;
+  });
+  const sumRows=Object.values(sm).map(s=>{
+    s['Avg Hrs/Day']=Math.round(s['_h']/s['Total Days']*100)/100;
+    s['Att %']=Math.round(s['Present']/s['Total Days']*100)+'%';
+    delete s['_h'];return s;
+  });
+  const ws1=XLSX.utils.json_to_sheet(sumRows);ws1['!cols']=[9,22,16,16,11,9,9,10,9,12,8].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb,ws1,'Summary');
+  const ws2=XLSX.utils.json_to_sheet(data.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,
+    'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'First In':r.firstIn,'Last Out':r.lastOut,
+    'Hours':r.hoursWorked,'Overtime':r.overtime,'Status':r.status,'Late By':r.lateBy,'Early Out':r.earlyBy,'Punches':r.punchCount})));
+  ws2['!cols']=[9,22,16,16,12,6,16,9,9,7,10,10,9,9,8].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb,ws2,'Daily Detail');
+  const lr=data.filter(r=>r.lateMins>0);
+  if(lr.length){const ws3=XLSX.utils.json_to_sheet(lr.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Arrived':r.firstIn,'Late By':r.lateBy})));ws3['!cols']=[9,22,16,16,12,6,16,9,9].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws3,'Late Report')}
+  const ar=data.filter(r=>r.status==='Absent');
+  if(ar.length){const ws4=XLSX.utils.json_to_sheet(ar.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay})));ws4['!cols']=[9,22,16,16,12,6,16].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws4,'Absent Report')}
+  const er=data.filter(r=>r.earlyMins>0);
+  if(er.length){const ws5=XLSX.utils.json_to_sheet(er.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Left At':r.lastOut,'Left Early By':r.earlyBy})));ws5['!cols']=[9,22,16,16,12,6,16,9,12].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws5,'Early Departure')}
+  const from=document.getElementById('date-from').value,to=document.getElementById('date-to').value;
+  XLSX.writeFile(wb,`HR_Attendance_${from}_to_${to}.xlsx`);
 }
