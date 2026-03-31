@@ -29,10 +29,61 @@ const S={
   failureDates:[]
 };
 
+function syncStickyLayout(){
+  const root=document.documentElement;
+  const filterBar=document.querySelector('#tab-daily .filter-bar');
+  const desktop=window.innerWidth>768;
+  const topbarOffset=desktop?0:0;
+  const filterHeight=desktop&&filterBar?Math.ceil(filterBar.getBoundingClientRect().height):0;
+  root.style.setProperty('--sticky-panel-top',topbarOffset+'px');
+  root.style.setProperty('--sticky-filter-height',filterHeight+'px');
+}
+
+function queueStickyLayoutSync(){
+  window.requestAnimationFrame(syncStickyLayout);
+}
+
+function syncAppMode(){
+  const uploadSection=document.getElementById('upload-section');
+  const isReport=uploadSection && uploadSection.style.display==='none';
+  document.body.dataset.mode=isReport?'report':'start';
+}
+
+function getShiftDurationMinutes(shiftStart,shiftEnd){
+  if(shiftStart==null || shiftEnd==null)return 480;
+  return shiftEnd>=shiftStart ? shiftEnd-shiftStart : (24*60-shiftStart)+shiftEnd;
+}
+
+function getLateMinutes(shiftStart,inM){
+  if(shiftStart==null || inM==null)return 0;
+  return Math.max(0,inM-shiftStart);
+}
+
+function getEarlyMinutes(shiftStart,shiftEnd,outM){
+  if(shiftEnd==null || outM==null)return 0;
+  if(shiftStart!=null && shiftEnd<shiftStart){
+    const normalizedOut=outM<shiftStart ? outM+1440 : outM;
+    return Math.max(0,(shiftEnd+1440)-normalizedOut);
+  }
+  return Math.max(0,shiftEnd-outM);
+}
+
+function getOvertimeMinutes(shiftStart,shiftEnd,outM,workedMins){
+  if(outM==null)return 0;
+  if(shiftStart==null || shiftEnd==null){
+    return Math.max(0,workedMins-480);
+  }
+  if(shiftEnd<shiftStart){
+    const normalizedOut=outM<shiftStart ? outM+1440 : outM;
+    return Math.max(0,normalizedOut-(shiftEnd+1440));
+  }
+  return Math.max(0,outM-shiftEnd);
+}
+
 window.onload=()=>{
   if(localStorage.getItem('theme')==='dark'){
     document.documentElement.setAttribute('data-theme','dark');
-    document.getElementById('theme-btn').textContent='☀️';
+    document.getElementById('theme-btn').textContent='Light';
   }
   const saved=localStorage.getItem('hr_att_v3');
   if(saved){
@@ -44,13 +95,19 @@ window.onload=()=>{
       buildReport();
     }catch(e){localStorage.removeItem('hr_att_v3')}
   }
+  syncAppMode();
+  queueStickyLayoutSync();
 };
+
+window.addEventListener('resize',queueStickyLayoutSync);
 
 function toggleTheme(){
   const d=document.documentElement.getAttribute('data-theme')==='dark';
   document.documentElement.setAttribute('data-theme',d?'light':'dark');
-  document.getElementById('theme-btn').textContent=d?'🌙':'☀️';
+  document.getElementById('theme-btn').textContent=d?'Dark':'Light';
   localStorage.setItem('theme',d?'light':'dark');
+  syncAppMode();
+  queueStickyLayoutSync();
 }
 function clearData(){
   if(!confirm('Clear all data and restart?'))return;
@@ -75,7 +132,7 @@ function removeFile(type,idx){
 function renderPills(type){
   const arr=type==='excel'?S.excelFiles:S.datFiles;
   document.getElementById('fl-'+type).innerHTML=arr.map((f,i)=>
-    `<div class="pill"><span>📄 ${f.name}</span><button class="pill-rm" onclick="removeFile('${type}',${i})">×</button></div>`
+    `<div class="pill"><span>${f.name}</span><button class="pill-rm" onclick="removeFile('${type}',${i})">x</button></div>`
   ).join('');
 }
 function checkReady(){
@@ -162,14 +219,14 @@ async function generateReport(){
   document.getElementById('toast').style.display='none';
   document.getElementById('btn-gen').disabled=true;
   try{
-    setProg(10,'Reading shift master…');
+    setProg(10,'Reading shift master...');
     S.shiftMap={};
     for(const f of S.excelFiles)Object.assign(S.shiftMap,await parseShift(f));
-    setProg(30,'Parsing attendance logs…');
+    setProg(30,'Parsing attendance logs...');
     let punches=[];
     for(const f of S.datFiles)punches.push(...await parseDat(f));
     if(!punches.length)throw new Error('No valid punch records found in the uploaded files.');
-    setProg(55,'Calculating attendance…');
+    setProg(55,'Calculating attendance...');
     const grouped={};
     for(const p of punches){
       const dk=p.dt.toISOString().split('T')[0];
@@ -191,8 +248,8 @@ async function generateReport(){
     }
     const uids=[...new Set([...Object.keys(S.shiftMap), ...punches.map(p=>p.uid)])];
     const pad2=n=>String(n).padStart(2,'0');
-    const m2t=m=>m==null||isNaN(m)?'—':pad2(Math.floor(m/60))+':'+pad2(m%60);
-    const fmtD=m=>m<=0?'—':(Math.floor(m/60)?Math.floor(m/60)+'h ':'')+((m%60)?m%60+'m':'');
+    const m2t=m=>m==null||isNaN(m)?'--':pad2(Math.floor(m/60))+':'+pad2(m%60);
+    const fmtD=m=>m<=0?'--':(Math.floor(m/60)?Math.floor(m/60)+'h ':'')+((m%60)?m%60+'m':'');
     
     S.records=[];
     for(const dt of dts){
@@ -203,10 +260,10 @@ async function generateReport(){
         const ps=g?g.punches.sort((a,b)=>a-b):[];
         
         const dy=new Date(dt+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
-        const sd=(info.shiftStart!==null&&info.shiftEnd!==null)?m2t(info.shiftStart)+' – '+m2t(info.shiftEnd):'—';
+        const sd=(info.shiftStart!==null&&info.shiftEnd!==null)?m2t(info.shiftStart)+' - '+m2t(info.shiftEnd):'--';
         
         let first=null,last=null,hrs=0,inM=null,outM=null,status='Absent',lateMins=0,earlyMins=0,otMins=0;
-        const sDur=(info.shiftStart!==null&&info.shiftEnd!==null)?(info.shiftEnd-info.shiftStart):480;
+        const sDur=getShiftDurationMinutes(info.shiftStart,info.shiftEnd);
         
         const isHol=S.holidays.find(h=>{
           const bMatch=h.b.some(b=>info.branch.includes(b));
@@ -223,15 +280,18 @@ async function generateReport(){
         if(ps.length>0){
           first=ps[0];last=ps[ps.length-1];
           hrs=(last-first)/3600000;
+          const workedMins=Math.max(0,Math.round((last-first)/60000));
           inM=first.getHours()*60+first.getMinutes();
           outM=last.getHours()*60+last.getMinutes();
           status='Present';
-          if(info.shiftStart!==null){lateMins=Math.max(0,inM-info.shiftStart);if(lateMins>15)status='Late'}
-          if(info.shiftEnd!==null)earlyMins=Math.max(0,info.shiftEnd-outM);
+          lateMins=getLateMinutes(info.shiftStart,inM);
+          if(lateMins>15)status='Late';
+          earlyMins=getEarlyMinutes(info.shiftStart,info.shiftEnd,outM);
           if(hrs<4.5)status='Half Day';
           if(hrs<0.25 || ps.length===1)status='Missed Punch';
           if(status!=='Missed Punch'){
-            otMins=Math.max(0,Math.round(hrs*60)-sDur);
+            // Overtime should reflect time worked beyond the scheduled shift end.
+            otMins=getOvertimeMinutes(info.shiftStart,info.shiftEnd,outM,workedMins);
           }
         }
         
@@ -248,7 +308,7 @@ async function generateReport(){
         S.records.push({
           uid,name:info.name,branch:info.branch,department:info.department,
           date:dt,day:dy,shiftDisplay:sd,
-          firstIn:ps.length?m2t(inM):'—',lastOut:ps.length?m2t(outM):'—',
+          firstIn:ps.length?m2t(inM):'--',lastOut:ps.length?m2t(outM):'--',
           hoursWorked:Math.round(hrs*100)/100,status,
           lateMins,earlyMins,lateBy:fmtD(lateMins),earlyBy:fmtD(earlyMins),
           otMins,overtime:fmtD(otMins),punchCount:ps.length,
@@ -256,14 +316,16 @@ async function generateReport(){
         });
       }
     }
-    setProg(90,'Saving session…');
+    setProg(90,'Saving session...');
     try{localStorage.setItem('hr_att_v3',JSON.stringify(S.records))}catch(e){}
-    setProg(100,`Done — ${S.records.length} records processed.`);
+    setProg(100,`Done - ${S.records.length} records processed.`);
     setTimeout(hideProg,1200);
     document.getElementById('upload-section').style.display='none';
     document.getElementById('btn-gen').style.display='none';
     document.getElementById('btn-clear').style.display='flex';
     buildReport();
+    syncAppMode();
+    queueStickyLayoutSync();
   }catch(err){
     showToast(err.message||'Processing failed.');
     console.error(err);
@@ -297,12 +359,14 @@ function buildReport(){
   document.getElementById('tb-early').textContent=S.earlyRecs.length;
   S.filtered=[...S.records];S.page=1;
   renderStats(S.records);renderTable();renderSubTables();renderInsights();
+  syncAppMode();
+  queueStickyLayoutSync();
 }
 
 function detectMachineFailures(){
   const r=S.records; if(!r.length)return;
 
-  // ── Helper: is this date a holiday for this branch? ──────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Helper: is this date a holiday for this branch? Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   function isHolidayForBranch(date, branch){
     return S.holidays.some(h=>{
       const bMatch=h.b.some(b=>(branch||'').includes(b));
@@ -312,7 +376,7 @@ function detectMachineFailures(){
     });
   }
 
-  // ── Step 1: Group by date|branch, tracking absent + punched counts ─
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 1: Group by date|branch, tracking absent + punched counts Ã¢â€â‚¬
   const grouped={};
   r.forEach(x=>{
     const bk=x.date+'|'+(x.branch||'Default');
@@ -326,7 +390,7 @@ function detectMachineFailures(){
     if(!['Absent','Week Off','Holiday','System Error'].includes(x.status)) grouped[bk].punched++;
   });
 
-  // ── Step 2: Evaluate each branch-day for anomaly ──────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 2: Evaluate each branch-day for anomaly Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   S.failureDates=[];
   Object.keys(grouped).forEach(bk=>{
     const g=grouped[bk];
@@ -343,22 +407,22 @@ function detectMachineFailures(){
 
     const absentRate = g.absent / g.total;
 
-    // ── TIER 1 — Zero Punch Day ───────────────────────────────────
-    // If NOBODY in the branch punched at all → 100% machine failure
+    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 1 Ã¢â‚¬â€ Zero Punch Day Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // If NOBODY in the branch punched at all Ã¢â€ â€™ 100% machine failure
     const isZeroPunchDay = g.punched === 0 && g.absent >= 3;
 
-    // ── TIER 2 — Near-Zero Punch Day ─────────────────────────────
-    // 1 or 2 people punched but the rest are absent → almost certainly a glitch
+    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 2 Ã¢â‚¬â€ Near-Zero Punch Day Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // 1 or 2 people punched but the rest are absent Ã¢â€ â€™ almost certainly a glitch
     // (e.g. manager arrived early before machine died, or used manual entry)
     const isNearZeroDay = g.punched <= 2 && g.absent >= 3 && absentRate >= 0.80;
 
-    // ── TIER 3 — High Absence Spike ──────────────────────────────
-    // ≥40% absent AND at least 3 people affected.
+    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 3 Ã¢â‚¬â€ High Absence Spike Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // Ã¢â€°Â¥40% absent AND at least 3 people affected.
     // 40% is chosen because genuine mass-absence on a normal working day is very rare.
     const isHighSpike = absentRate >= 0.40 && g.absent >= 3;
 
-    // ── TIER 4 — Moderate Spike with large branch ─────────────────
-    // Branch has 10+ people and ≥30% absent — statistically improbable without a glitch
+    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 4 Ã¢â‚¬â€ Moderate Spike with large branch Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // Branch has 10+ people and Ã¢â€°Â¥30% absent Ã¢â‚¬â€ statistically improbable without a glitch
     const isModerateSpike = g.total >= 10 && absentRate >= 0.30 && g.absent >= 4;
 
     const isAnomaly = isZeroPunchDay || isNearZeroDay || isHighSpike || isModerateSpike;
@@ -378,8 +442,8 @@ function detectMachineFailures(){
         if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
           x.status='System Error';
           x.gapMins=0; x.gapFmt='0m'; x.gapClass='g-ok';
-          // Clear late/early metrics — these aren't meaningful for a system error
-          x.lateMins=0; x.earlyMins=0; x.lateBy='—'; x.earlyBy='—';
+          // Clear late/early metrics Ã¢â‚¬â€ these aren't meaningful for a system error
+          x.lateMins=0; x.earlyMins=0; x.lateBy='--'; x.earlyBy='--';
         }
       });
     }
@@ -395,7 +459,7 @@ function quickFilter(s){
 function renderInsights(){
   const r=S.records; if(!r.length)return;
   const ins=document.getElementById('insights-panel'); ins.style.display='grid';
-  const dash=v=>v||'<span class="dash">—</span>';
+  const dash=v=>v||'<span class="dash">--</span>';
   
   // Logic: Top Branch (Highest Attendance %)
   const brData={}; 
@@ -417,23 +481,23 @@ function renderInsights(){
 
   ins.innerHTML=`
     <div class="insight-item">
-      <div class="insight-icon">🏆</div>
+      <div class="insight-icon">Top</div>
       <div class="insight-txt"><strong>Top Branch:</strong> <strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div>
     </div>
     <div class="insight-item">
-      <div class="insight-icon">🎯</div>
+      <div class="insight-icon">KPI</div>
       <div class="insight-txt"><strong>Stability Score:</strong> Total workplace attendance is at <strong>${totalAtt}%</strong>. ${totalAtt>85?'Very healthy!':'Check for blockages.'}</div>
     </div>
     ${S.failureDates.length ? `
     <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
-      <div class="insight-icon">🚨</div>
+      <div class="insight-icon">Alert</div>
       <div class="insight-txt">
-        <strong>Machine Failures Detected:</strong> <strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong> — reclassified as System Error.
-        <br><span style="font-size:11px;color:var(--ink3);margin-top:3px;display:block">${S.failureDates.slice(0,3).map(f=>`${f.date} · ${f.branch||'Unknown'} (${f.reason})`).join(' &nbsp;|&nbsp; ')}${S.failureDates.length>3?` &nbsp;+${S.failureDates.length-3} more`:''}. Click to view.</span>
+        <strong>Machine Failures Detected:</strong> <strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong> - reclassified as System Error.
+        <br><span style="font-size:11px;color:var(--ink3);margin-top:3px;display:block">${S.failureDates.slice(0,3).map(f=>`${f.date} | ${f.branch||'Unknown'} (${f.reason})`).join(' | ')}${S.failureDates.length>3?` | +${S.failureDates.length-3} more`:''}. Click to view.</span>
       </div>
     </div>` : `
     <div class="insight-item">
-      <div class="insight-icon">🕒</div>
+      <div class="insight-icon">Time</div>
       <div class="insight-txt"><strong>Punctuality:</strong> <strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline!':'Review shift overlaps.'}</div>
     </div>
     `}
@@ -445,6 +509,7 @@ function switchTab(name,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   if(name==='summary')renderSummary();
+  queueStickyLayoutSync();
 }
 
 function applyFilters(){
@@ -514,19 +579,19 @@ function renderTable(){
   document.getElementById('table-body').innerHTML=slice.map((r,i)=>`
 <tr onclick="toggleExp(${start+i})" id="row-${start+i}" style="animation-delay: ${i*0.04}s">
   <td class="td-emp" data-label="Employee"><strong>${r.name}</strong><small>ID ${r.uid}</small></td>
-  <td title="${r.branch}" data-label="Branch">${r.branch||'<span class="dash">—</span>'}</td>
-  <td title="${r.department}" data-label="Department">${r.department||'<span class="dash">—</span>'}</td>
+  <td title="${r.branch}" data-label="Branch">${r.branch||'<span class="dash">--</span>'}</td>
+  <td title="${r.department}" data-label="Department">${r.department||'<span class="dash">--</span>'}</td>
   <td class="mono" data-label="Date">${r.date}</td>
   <td style="color:var(--ink3);font-size:12px" data-label="Day">${r.day}</td>
   <td class="mono" data-label="In">${r.firstIn}</td>
   <td class="mono" data-label="Out">${r.lastOut}</td>
   <td class="mono ${hc(r.hoursWorked)}" data-label="Hours">${r.hoursWorked}h</td>
-  <td class="overtime-v" data-label="Overtime">${r.otMins>0?r.overtime:'<span class="dash">—</span>'}</td>
+  <td class="overtime-v" data-label="Overtime">${r.otMins>0?r.overtime:'<span class="dash">--</span>'}</td>
   <td class="mono" data-label="Punches">${r.punchCount}</td>
   <td data-label="Status">${bdg(r.status)}</td>
   <td class="${r.gapClass}" data-label="Gap">${r.gapMins<=0?'-':''}${r.gapFmt}</td>
-  <td class="late-v" data-label="Late By">${r.lateMins>0?r.lateBy:'<span class="dash">—</span>'}</td>
-  <td class="early-v" data-label="Early Out">${r.earlyMins>0?r.earlyBy:'<span class="dash">—</span>'}</td>
+  <td class="late-v" data-label="Late By">${r.lateMins>0?r.lateBy:'<span class="dash">--</span>'}</td>
+  <td class="early-v" data-label="Early Out">${r.earlyMins>0?r.earlyBy:'<span class="dash">--</span>'}</td>
 </tr>
 <tr class="exp-row" id="exp-${start+i}">
   <td class="exp-cell" colspan="14">
@@ -535,26 +600,27 @@ function renderTable(){
       <div class="exp-stat"><label>Total Punches</label><span>${r.punchCount}</span></div>
       <div class="exp-stat"><label>Overtime</label><span class="overtime-v">${r.otMins>0?r.overtime:'0m'}</span></div>
       <div class="exp-stat"><label>Hours Worked</label><span class="${hc(r.hoursWorked)}">${r.hoursWorked}h</span></div>
-      <div class="exp-stat"><label>Department</label><span>${r.department||'—'}</span></div>
-      <div class="exp-stat"><label>Branch</label><span>${r.branch||'—'}</span></div>
+      <div class="exp-stat"><label>Department</label><span>${r.department||'--'}</span></div>
+      <div class="exp-stat"><label>Branch</label><span>${r.branch||'--'}</span></div>
     </div>
   </td>
 </tr>`).join('');
   const end=Math.min(start+S.perPage,total);
-  document.getElementById('page-info').textContent=total===0?'No records':`Showing ${start+1}–${end} of ${total} records`;
+  document.getElementById('page-info').textContent=total===0?'No records':`Showing ${start+1}-${end} of ${total} records`;
   const pages=Math.ceil(total/S.perPage);let html='';
   if(pages>1){
-    html+=`<button class="pBtn" onclick="goPage(${S.page-1})" ${S.page===1?'disabled':''}>‹</button>`;
+    html+=`<button class="pBtn" onclick="goPage(${S.page-1})" ${S.page===1?'disabled':''}>&lt;</button>`;
     for(let i=1;i<=pages;i++){
       if(i===1||i===pages||Math.abs(i-S.page)<=1)html+=`<button class="pBtn ${i===S.page?'active':''}" onclick="goPage(${i})">${i}</button>`;
-      else if(i===S.page-2||i===S.page+2)html+=`<button class="pBtn" style="pointer-events:none">…</button>`;
+      else if(i===S.page-2||i===S.page+2)html+=`<button class="pBtn" style="pointer-events:none">...</button>`;
     }
-    html+=`<button class="pBtn" onclick="goPage(${S.page+1})" ${S.page===pages?'disabled':''}>›</button>`;
+    html+=`<button class="pBtn" onclick="goPage(${S.page+1})" ${S.page===pages?'disabled':''}>&gt;</button>`;
   }
   document.getElementById('page-ctrls').innerHTML=html;
 }
 
 function toggleExp(idx){
+  if(window.innerWidth<=768)return;
   const row=document.getElementById('row-'+idx);
   const exp=document.getElementById('exp-'+idx);
   const open=exp.classList.contains('open');
@@ -615,7 +681,7 @@ function renderSummary(){
         <div class="avatar" style="background:${col}22;color:${col}">${initials(e.name)}</div>
         <div class="emp-card-info"><h4 title="${e.name}">${e.name}</h4><small>ID ${e.uid}</small></div>
       </div>
-      <div class="emp-meta">${e.dept||'—'} · ${e.branch||'—'}</div>
+      <div class="emp-meta">${e.dept||'--'} | ${e.branch||'--'}</div>
       <div class="att-bar-wrap"><div class="att-bar ${p<70?'low':''}" style="width:${p}%"></div></div>
       <div class="emp-pct-row"><span>Attendance <strong style="color:var(--ink)">${p}%</strong></span><span>Avg <strong style="color:var(--ink)">${avg}h/day</strong></span></div>
       <div class="emp-stats">
@@ -630,20 +696,20 @@ function renderSummary(){
 function renderSubTables(){
   const row=(x,i,type)=>`
     <tr class="anim-fade" style="animation-delay: ${i*0.04}s">
-      <td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td>
-      <td title="${x.branch}">${x.branch||'—'}</td>
-      <td title="${x.department}">${x.department||'—'}</td>
-      <td class="mono">${x.date}</td>
-      <td style="color:var(--ink3);font-size:12px">${x.day}</td>
-      <td><span class="shift-chip">${x.shiftDisplay}</span></td>
+      <td class="td-emp" data-label="Employee"><strong>${x.name}</strong><small>ID ${x.uid}</small></td>
+      <td title="${x.branch}" data-label="Branch">${x.branch||'--'}</td>
+      <td title="${x.department}" data-label="Department">${x.department||'--'}</td>
+      <td class="mono" data-label="Date">${x.date}</td>
+      <td style="color:var(--ink3);font-size:12px" data-label="Day">${x.day}</td>
+      <td data-label="Shift"><span class="shift-chip">${x.shiftDisplay}</span></td>
       ${type==='late'?`
-        <td class="mono late-v">${x.firstIn}</td>
-        <td class="late-v">${x.lateBy}</td>
+        <td class="mono late-v" data-label="Arrived">${x.firstIn}</td>
+        <td class="late-v" data-label="Late By">${x.lateBy}</td>
       `:type==='early'?`
-        <td class="mono early-v">${x.lastOut}</td>
-        <td class="early-v">${x.earlyBy}</td>
+        <td class="mono early-v" data-label="Left At">${x.lastOut}</td>
+        <td class="early-v" data-label="Left Early By">${x.earlyBy}</td>
       `:`
-        <td><span class="badge b-absent">Absent</span></td>
+        <td data-label="Status"><span class="badge b-absent">Absent</span></td>
       `}
     </tr>`;
 
