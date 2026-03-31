@@ -29,13 +29,29 @@ const S={
   failureDates:[]
 };
 
+const FILTER_CONFIG={
+  'f-branch':{label:'Branches'},
+  'f-dept':{label:'Departments'},
+  'f-status':{label:'Statuses'},
+  'f-emp':{label:'Employees'}
+};
+
+const STATUS_OPTIONS=['Present','Late','Late (Comp)','Half Day','Missed Punch','Absent','Holiday','Week Off','System Error'];
+const THEMES=[
+  {id:'light',label:'Light'},
+  {id:'obsidian',label:'Obsidian'},
+  {id:'midnight',label:'Midnight'},
+  {id:'sapphire',label:'Sapphire'}
+];
+
 function syncStickyLayout(){
   const root=document.documentElement;
   const filterBar=document.querySelector('#tab-daily .filter-bar');
   const desktop=window.innerWidth>768;
-  const topbarOffset=desktop?0:0;
+  const topbar=document.querySelector('.topbar');
+  const topbarHeight=topbar?topbar.getBoundingClientRect().height+8:0;
   const filterHeight=desktop&&filterBar?Math.ceil(filterBar.getBoundingClientRect().height):0;
-  root.style.setProperty('--sticky-panel-top',topbarOffset+'px');
+  root.style.setProperty('--sticky-panel-top',topbarHeight+'px');
   root.style.setProperty('--sticky-filter-height',filterHeight+'px');
 }
 
@@ -81,10 +97,8 @@ function getOvertimeMinutes(shiftStart,shiftEnd,outM,workedMins){
 }
 
 window.onload=()=>{
-  if(localStorage.getItem('theme')==='dark'){
-    document.documentElement.setAttribute('data-theme','dark');
-    document.getElementById('theme-btn').textContent='Light';
-  }
+  const savedTheme=localStorage.getItem('theme');
+  applyTheme(savedTheme==='dark'?'midnight':(savedTheme||'obsidian'));
   const saved=localStorage.getItem('hr_att_v3');
   if(saved){
     try{
@@ -95,6 +109,8 @@ window.onload=()=>{
       buildReport();
     }catch(e){localStorage.removeItem('hr_att_v3')}
   }
+  bindDatePickers();
+  bindFilterMenus();
   syncAppMode();
   queueStickyLayoutSync();
 };
@@ -102,13 +118,123 @@ window.onload=()=>{
 window.addEventListener('resize',queueStickyLayoutSync);
 
 function toggleTheme(){
-  const d=document.documentElement.getAttribute('data-theme')==='dark';
-  document.documentElement.setAttribute('data-theme',d?'light':'dark');
-  document.getElementById('theme-btn').textContent=d?'Dark':'Light';
-  localStorage.setItem('theme',d?'light':'dark');
+  const current=document.documentElement.getAttribute('data-theme')||'obsidian';
+  const idx=THEMES.findIndex(t=>t.id===current);
+  const next=THEMES[(idx+1+THEMES.length)%THEMES.length];
+  applyTheme(next.id);
+}
+
+function applyTheme(themeId){
+  const theme=THEMES.find(t=>t.id===themeId)||THEMES[0];
+  document.documentElement.setAttribute('data-theme',theme.id);
+  document.getElementById('theme-btn-label').textContent=theme.label;
+  localStorage.setItem('theme',theme.id);
   syncAppMode();
   queueStickyLayoutSync();
 }
+
+function bindDatePickers(){
+  ['date-from','date-to'].forEach(id=>{
+    const input=document.getElementById(id);
+    if(!input || input.dataset.pickerBound==='1')return;
+    const openPicker=()=>{
+      if(typeof input.showPicker==='function'){
+        try{input.showPicker();}catch(e){}
+      }
+    };
+    input.addEventListener('click',openPicker);
+    input.addEventListener('focus',openPicker);
+    input.dataset.pickerBound='1';
+  });
+}
+
+function getSelectedValues(id){
+  const el=document.getElementById(id);
+  return (el.dataset.selected||'').split('||').filter(Boolean);
+}
+
+function setSelectedValues(id,values){
+  const el=document.getElementById(id);
+  el.dataset.selected=values.join('||');
+  refreshFilterButton(id);
+  syncFilterChecks(id);
+}
+
+function bindFilterMenus(){
+  document.addEventListener('click',e=>{
+    if(e.target.closest('.mfilter'))return;
+    document.querySelectorAll('.mfilter.open').forEach(el=>el.classList.remove('open'));
+  });
+}
+
+function renderFilterMenu(id,items){
+  const el=document.getElementById(id);
+  const label=FILTER_CONFIG[id].label;
+  const selected=getSelectedValues(id);
+  const summary=selected.length?`${label} (${selected.length})`:label;
+  el.className='mfilter';
+  el.dataset.label=label;
+  el.dataset.items=JSON.stringify(items);
+  el.innerHTML=`
+    <button class="mfilter-btn" type="button" onclick="toggleFilterMenu('${id}')">
+      <span>${summary}</span>
+      <span class="mfilter-arrow">▼</span>
+    </button>
+    <div class="mfilter-panel">
+      <div class="mfilter-actions">
+        <button type="button" class="mfilter-action" onclick="setFilterAll('${id}', true)">All</button>
+        <button type="button" class="mfilter-action" onclick="setFilterAll('${id}', false)">Clear</button>
+      </div>
+      <div class="mfilter-list">
+        ${items.map(item=>`
+          <label class="mfilter-option">
+            <input type="checkbox" value="${item.value}" onchange="toggleFilterValue('${id}', this.value, this.checked)">
+            <span>${item.label}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  syncFilterChecks(id);
+}
+
+function refreshFilterButton(id){
+  const el=document.getElementById(id);
+  const btn=el.querySelector('.mfilter-btn span');
+  if(!btn)return;
+  const label=FILTER_CONFIG[id].label;
+  const selected=getSelectedValues(id);
+  btn.textContent=selected.length?`${label} (${selected.length})`:label;
+}
+
+function syncFilterChecks(id){
+  const selected=new Set(getSelectedValues(id));
+  document.querySelectorAll(`#${id} input[type="checkbox"]`).forEach(box=>{
+    box.checked=selected.has(box.value);
+  });
+}
+
+function toggleFilterMenu(id){
+  document.querySelectorAll('.mfilter.open').forEach(el=>{
+    if(el.id!==id)el.classList.remove('open');
+  });
+  document.getElementById(id).classList.toggle('open');
+}
+
+function toggleFilterValue(id,value,checked){
+  const selected=new Set(getSelectedValues(id));
+  if(checked)selected.add(value); else selected.delete(value);
+  setSelectedValues(id,[...selected]);
+  applyFilters();
+}
+
+function setFilterAll(id,selectAll){
+  const el=document.getElementById(id);
+  const items=JSON.parse(el.dataset.items||'[]');
+  setSelectedValues(id,selectAll?items.map(item=>item.value):[]);
+  applyFilters();
+}
+
 function clearData(){
   if(!confirm('Clear all data and restart?'))return;
   localStorage.removeItem('hr_att_v3');location.reload();
@@ -337,13 +463,11 @@ async function generateReport(){
 function buildReport(){
   detectMachineFailures();
   const uniq=k=>[...new Set(S.records.map(r=>r[k]).filter(Boolean))].sort();
-  const fill=(id,vals)=>{
-    const el=document.getElementById(id);
-    el.innerHTML='<option value="">'+el.options[0].text+'</option>'+vals.map(v=>`<option value="${v}">${v}</option>`).join('');
-  };
-  fill('f-branch',uniq('branch'));fill('f-dept',uniq('department'));
+  renderFilterMenu('f-branch',uniq('branch').map(v=>({value:v,label:v})));
+  renderFilterMenu('f-dept',uniq('department').map(v=>({value:v,label:v})));
+  renderFilterMenu('f-status',STATUS_OPTIONS.map(v=>({value:v,label:v})));
   const emps=[...new Set(S.records.map(r=>`${r.uid}|${r.name}`))].sort().map(e=>{const[uid,nm]=e.split('|');return{uid,name:nm}});
-  document.getElementById('f-emp').innerHTML='<option value="">All Employees</option>'+emps.map(e=>`<option value="${e.uid}">${e.name} (${e.uid})</option>`).join('');
+  renderFilterMenu('f-emp',emps.map(e=>({value:e.uid,label:`${e.name} (${e.uid})`})));
   
   S.lateRecs=S.records.filter(r=>r.lateMins>0);
   S.absentRecs=S.records.filter(r=>r.status==='Absent');
@@ -451,7 +575,8 @@ function detectMachineFailures(){
 }
 
 function quickFilter(s){
-  document.getElementById('f-status').value=s;
+  setSelectedValues('f-status',[s]);
+  document.querySelectorAll('.mfilter.open').forEach(el=>el.classList.remove('open'));
   switchTab('daily', document.querySelector('[onclick*="switchTab(\'daily\'"]'));
   applyFilters();
 }
@@ -481,24 +606,53 @@ function renderInsights(){
 
   ins.innerHTML=`
     <div class="insight-item">
-      <div class="insight-icon">Top</div>
-      <div class="insight-txt"><strong>Top Branch:</strong> <strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div>
+      <div class="insight-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3 14.8 8.7 21 9.5l-4.5 4.3 1.1 6.2L12 17.1 6.4 20l1.1-6.2L3 9.5l6.2-.8z"></path>
+        </svg>
+      </div>
+      <div class="insight-copy">
+        <span class="insight-kicker">Top Branch</span>
+        <div class="insight-txt"><strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div>
+      </div>
     </div>
     <div class="insight-item">
-      <div class="insight-icon">KPI</div>
-      <div class="insight-txt"><strong>Stability Score:</strong> Total workplace attendance is at <strong>${totalAtt}%</strong>. ${totalAtt>85?'Very healthy!':'Check for blockages.'}</div>
+      <div class="insight-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 18h16"></path>
+          <path d="M7 14 10 11l3 2 4-5"></path>
+        </svg>
+      </div>
+      <div class="insight-copy">
+        <span class="insight-kicker">Stability</span>
+        <div class="insight-txt"><strong>${totalAtt}%</strong> overall attendance. ${totalAtt>85?'Very healthy.':'Needs review.'}</div>
+      </div>
     </div>
     ${S.failureDates.length ? `
     <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
-      <div class="insight-icon">Alert</div>
-      <div class="insight-txt">
-        <strong>Machine Failures Detected:</strong> <strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong> - reclassified as System Error.
-        <br><span style="font-size:11px;color:var(--ink3);margin-top:3px;display:block">${S.failureDates.slice(0,3).map(f=>`${f.date} | ${f.branch||'Unknown'} (${f.reason})`).join(' | ')}${S.failureDates.length>3?` | +${S.failureDates.length-3} more`:''}. Click to view.</span>
+      <div class="insight-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 9v4"></path>
+          <path d="M12 17h.01"></path>
+          <path d="M10.3 4.9 2.6 18.2a1 1 0 0 0 .9 1.5h17a1 1 0 0 0 .9-1.5L13.7 4.9a1 1 0 0 0-1.7 0z"></path>
+        </svg>
+      </div>
+      <div class="insight-copy">
+        <span class="insight-kicker">System Alert</span>
+        <div class="insight-txt"><strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong>. Click to review System Error rows.</div>
       </div>
     </div>` : `
     <div class="insight-item">
-      <div class="insight-icon">Time</div>
-      <div class="insight-txt"><strong>Punctuality:</strong> <strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline!':'Review shift overlaps.'}</div>
+      <div class="insight-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8"></circle>
+          <path d="M12 8v4l3 2"></path>
+        </svg>
+      </div>
+      <div class="insight-copy">
+        <span class="insight-kicker">Punctuality</span>
+        <div class="insight-txt"><strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline.':'Review shift overlaps.'}</div>
+      </div>
     </div>
     `}
   `;
@@ -514,10 +668,10 @@ function switchTab(name,btn){
 
 function applyFilters(){
   const q=document.getElementById('search').value.toLowerCase();
-  const branch=document.getElementById('f-branch').value;
-  const dept=document.getElementById('f-dept').value;
-  const status=document.getElementById('f-status').value;
-  const empId=document.getElementById('f-emp').value;
+  const branches=getSelectedValues('f-branch');
+  const depts=getSelectedValues('f-dept');
+  const statuses=getSelectedValues('f-status');
+  const empIds=getSelectedValues('f-emp');
   const fv=document.getElementById('date-from').value;
   const tv=document.getElementById('date-to').value;
   const hasDates=fv&&tv;
@@ -529,10 +683,10 @@ function applyFilters(){
   
   S.filtered=S.records.filter(r=>{
     if(q&&!(r.name.toLowerCase().includes(q)||r.uid.includes(q)))return false;
-    if(branch&&r.branch!==branch)return false;
-    if(dept&&r.department!==dept)return false;
-    if(status&&r.status!==status)return false;
-    if(empId&&r.uid!==empId)return false;
+    if(branches.length&& !branches.includes(r.branch))return false;
+    if(depts.length&& !depts.includes(r.department))return false;
+    if(statuses.length&& !statuses.includes(r.status))return false;
+    if(empIds.length&& !empIds.includes(r.uid))return false;
     const rt=new Date(r.date).getTime();
     if(fv&&rt<from)return false;
     if(tv&&rt>to)return false;
