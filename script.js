@@ -557,12 +557,28 @@ function renderSummary(){
 }
 
 function renderSubTables(){
-  const h=t=>`<table class="${t}-table"><thead><tr><th class="c-emp">Employee</th><th class="c-br">Branch</th><th class="c-dp">Dept</th><th class="c-dt">Date</th><th class="c-dy">Day</th><th class="c-st">Shift</th><th class="c-lt">Details</th></tr></thead><tbody>`;
-  const r=(t,d)=>d.map((x,i)=>`<tr class="anim-fade" style="animation-delay: ${i*0.04}s"><td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td><td>${x.branch||'—'}</td><td>${x.department||'—'}</td><td class="mono">${x.date}</td><td style="color:var(--ink3);font-size:12px">${x.day}</td><td><span class="shift-chip">${x.shiftDisplay}</span></td><td class="${t==='late'?'late-v':'early-v'}">${t==='late'?(x.firstIn+' ('+x.lateBy+')'):(x.lastOut+' ('+x.earlyBy+')')}</td></tr>`).join('');
+  const row=(x,i,type)=>`
+    <tr class="anim-fade" style="animation-delay: ${i*0.04}s">
+      <td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td>
+      <td title="${x.branch}">${x.branch||'—'}</td>
+      <td title="${x.department}">${x.department||'—'}</td>
+      <td class="mono">${x.date}</td>
+      <td style="color:var(--ink3);font-size:12px">${x.day}</td>
+      <td><span class="shift-chip">${x.shiftDisplay}</span></td>
+      ${type==='late'?`
+        <td class="mono late-v">${x.firstIn}</td>
+        <td class="late-v">${x.lateBy}</td>
+      `:type==='early'?`
+        <td class="mono early-v">${x.lastOut}</td>
+        <td class="early-v">${x.earlyBy}</td>
+      `:`
+        <td><span class="badge b-absent">Absent</span></td>
+      `}
+    </tr>`;
 
-  document.getElementById('late-body').innerHTML=S.lateRecs.length?h('late')+r('late',S.lateRecs.slice(0,50))+'</tbody></table>':'<div class="p-20">No late arrivals</div>';
-  document.getElementById('absent-body').innerHTML=S.absentRecs.length?h('absent')+S.absentRecs.slice(0,50).map((x,i)=>`<tr class="anim-fade" style="animation-delay: ${i*0.04}s"><td class="td-emp"><strong>${x.name}</strong><small>ID ${x.uid}</small></td><td>${x.branch||'—'}</td><td>${x.department||'—'}</td><td class="mono">${x.date}</td><td style="color:var(--ink3);font-size:12px">${x.day}</td><td><span class="shift-chip">${x.shiftDisplay}</span></td><td><span class="badge b-absent">Absent</span></td></tr>`).join('')+'</tbody></table>':'<div class="p-20">No absences</div>';
-  document.getElementById('early-body').innerHTML=S.earlyRecs.length?h('early')+r('early',S.earlyRecs.slice(0,50))+'</tbody></table>':'<div class="p-20">No early departures</div>';
+  document.getElementById('late-body').innerHTML=S.lateRecs.length?S.lateRecs.slice(0,50).map((x,i)=>row(x,i,'late')).join(''):'<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--ink3)">No late arrivals</td></tr>';
+  document.getElementById('absent-body').innerHTML=S.absentRecs.length?S.absentRecs.slice(0,50).map((x,i)=>row(x,i,'absent')).join(''):'<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--ink3)">No absences</td></tr>';
+  document.getElementById('early-body').innerHTML=S.earlyRecs.length?S.earlyRecs.slice(0,50).map((x,i)=>row(x,i,'early')).join(''):'<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--ink3)">No early departures</td></tr>';
 }
 
 function downloadExcel(){

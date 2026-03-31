@@ -805,10 +805,10 @@ body {
 
 .filter-bar {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 9px 1.25rem;
+  padding: 12px 1.25rem;
   background: var(--surface2);
   border-bottom: 1px solid var(--border)
 }
@@ -929,57 +929,22 @@ tbody tr.expanded td {
 }
 
 /* col widths — calibrated to fill 100% with no scroll */
-.c-emp {
-  width: 14%
-}
-
-.c-br {
-  width: 9%
-}
-
-.c-dp {
-  width: 9%
-}
-
-.c-dt {
-  width: 9%
-}
-
-.c-dy {
-  width: 4%
-}
-
-.c-in {
-  width: 6%
-}
-
-.c-out {
-  width: 6%
-}
-
-.c-h {
-  width: 5%
-}
-
-.c-pc {
-  width: 5%
-}
-
-.c-st {
-  width: 10%
-}
-
-.c-ov {
-  width: 7%
-}
-
-.c-lt {
-  width: 8%
-}
-
-.c-el {
-  width: 8%
-}
+.c-emp { width: 16% }
+.late-table .c-emp, .absent-table .c-emp, .early-table .c-emp { width: 22% }
+.c-br { width: 9% }
+.c-dp { width: 9% }
+.c-dt { width: 9% }
+.c-dy { width: 4% }
+.c-shft { width: 16% }
+.c-in { width: 6% }
+.c-out { width: 6% }
+.c-h { width: 5% }
+.c-pc { width: 5% }
+.c-st { width: 10% }
+.c-ov { width: 7% }
+.c-lt { width: 8% }
+.c-el { width: 8% }
+.c-gp { width: 7% }
 
 .td-emp strong {
   display: block;
