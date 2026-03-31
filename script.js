@@ -301,31 +301,87 @@ function buildReport(){
 
 function detectMachineFailures(){
   const r=S.records; if(!r.length)return;
-  const grouped={}; 
+
+  // ── Helper: is this date a holiday for this branch? ──────────────
+  function isHolidayForBranch(date, branch){
+    return S.holidays.some(h=>{
+      const bMatch=h.b.some(b=>(branch||'').includes(b));
+      if(!bMatch)return false;
+      if(h.d2)return date>=h.d&&date<=h.d2;
+      return date===h.d;
+    });
+  }
+
+  // ── Step 1: Group by date|branch, tracking absent + punched counts ─
+  const grouped={};
   r.forEach(x=>{
     const bk=x.date+'|'+(x.branch||'Default');
-    if(!grouped[bk])grouped[bk]={total:0,absent:0,date:x.date,branch:x.branch};
+    if(!grouped[bk])grouped[bk]={
+      total:0, absent:0, punched:0,
+      date:x.date, branch:x.branch
+    };
     grouped[bk].total++;
-    if(x.status==='Absent')grouped[bk].absent++;
+    if(x.status==='Absent') grouped[bk].absent++;
+    // "punched" = anyone who actually had at least 1 swipe (not Absent/Holiday/WeekOff)
+    if(!['Absent','Week Off','Holiday','System Error'].includes(x.status)) grouped[bk].punched++;
   });
-  
+
+  // ── Step 2: Evaluate each branch-day for anomaly ──────────────────
   S.failureDates=[];
   Object.keys(grouped).forEach(bk=>{
     const g=grouped[bk];
-    const rate=g.absent/g.total;
     const dy=new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
-    
-    // Strict Threshold: 80% absence (min 5 people) on a weekday.
-    const isAnomaly = dy!=='Sun' && (rate >= 0.8 && g.absent >= 5);
-    
+
+    // Guard 1: Skip weekends (Sun & Sat handled by Week Off status, but check Sunday explicitly)
+    if(dy==='Sun') return;
+
+    // Guard 2: Skip recognized holidays for this branch
+    if(isHolidayForBranch(g.date, g.branch)) return;
+
+    // Guard 3: Need at least 3 people in the branch to avoid false positives
+    if(g.total < 3) return;
+
+    const absentRate = g.absent / g.total;
+
+    // ── TIER 1 — Zero Punch Day ───────────────────────────────────
+    // If NOBODY in the branch punched at all → 100% machine failure
+    const isZeroPunchDay = g.punched === 0 && g.absent >= 3;
+
+    // ── TIER 2 — Near-Zero Punch Day ─────────────────────────────
+    // 1 or 2 people punched but the rest are absent → almost certainly a glitch
+    // (e.g. manager arrived early before machine died, or used manual entry)
+    const isNearZeroDay = g.punched <= 2 && g.absent >= 3 && absentRate >= 0.80;
+
+    // ── TIER 3 — High Absence Spike ──────────────────────────────
+    // ≥40% absent AND at least 3 people affected.
+    // 40% is chosen because genuine mass-absence on a normal working day is very rare.
+    const isHighSpike = absentRate >= 0.40 && g.absent >= 3;
+
+    // ── TIER 4 — Moderate Spike with large branch ─────────────────
+    // Branch has 10+ people and ≥30% absent — statistically improbable without a glitch
+    const isModerateSpike = g.total >= 10 && absentRate >= 0.30 && g.absent >= 4;
+
+    const isAnomaly = isZeroPunchDay || isNearZeroDay || isHighSpike || isModerateSpike;
+
     if(isAnomaly){
-       S.failureDates.push({date:g.date, branch:g.branch});
-       r.forEach(x=>{
-         if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
-           x.status='System Error';
-           x.gapMins=0; x.gapFmt='0m'; x.gapClass='g-ok';
-         }
-       });
+      // Determine the confidence reason for the insight panel
+      let reason='high absence spike';
+      if(isZeroPunchDay)       reason='zero punch day (total machine failure)';
+      else if(isNearZeroDay)   reason='near-zero punches (likely machine failure)';
+      else if(isHighSpike)     reason=`${Math.round(absentRate*100)}% absence spike`;
+      else if(isModerateSpike) reason=`${Math.round(absentRate*100)}% absence in large branch`;
+
+      S.failureDates.push({date:g.date, branch:g.branch, reason, affected:g.absent, total:g.total});
+
+      // Reclassify all Absent records for this branch+date to System Error
+      r.forEach(x=>{
+        if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
+          x.status='System Error';
+          x.gapMins=0; x.gapFmt='0m'; x.gapClass='g-ok';
+          // Clear late/early metrics — these aren't meaningful for a system error
+          x.lateMins=0; x.earlyMins=0; x.lateBy='—'; x.earlyBy='—';
+        }
+      });
     }
   });
 }
@@ -371,7 +427,10 @@ function renderInsights(){
     ${S.failureDates.length ? `
     <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
       <div class="insight-icon">🚨</div>
-      <div class="insight-txt"><strong>Branch Anomalies:</strong> <strong>${S.failureDates.length} incidents</strong> detected across ${[...new Set(S.failureDates.map(f=>f.branch))].length} branches. Reclassified as System Error.</div>
+      <div class="insight-txt">
+        <strong>Machine Failures Detected:</strong> <strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong> — reclassified as System Error.
+        <br><span style="font-size:11px;color:var(--ink3);margin-top:3px;display:block">${S.failureDates.slice(0,3).map(f=>`${f.date} · ${f.branch||'Unknown'} (${f.reason})`).join(' &nbsp;|&nbsp; ')}${S.failureDates.length>3?` &nbsp;+${S.failureDates.length-3} more`:''}. Click to view.</span>
+      </div>
     </div>` : `
     <div class="insight-item">
       <div class="insight-icon">🕒</div>
