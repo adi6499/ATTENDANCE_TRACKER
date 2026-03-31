@@ -315,8 +315,10 @@ function detectMachineFailures(){
     const rate=g.absent/g.total;
     const dy=new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
     
-    // Strict Branch-wise detection: 15% missing on a weekday.
-    if(dy!=='Sun' && rate >= 0.15){
+    // Strict Threshold: 80% absence (min 5 people) on a weekday.
+    const isAnomaly = dy!=='Sun' && (rate >= 0.8 && g.absent >= 5);
+    
+    if(isAnomaly){
        S.failureDates.push({date:g.date, branch:g.branch});
        r.forEach(x=>{
          if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){

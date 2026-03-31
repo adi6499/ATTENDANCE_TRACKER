@@ -748,7 +748,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r2);
-  overflow: hidden;
+  /* overflow: visible; - removed hidden to allow sticky children */
   box-shadow: var(--sh2)
 }
 
@@ -759,7 +759,8 @@ body {
   flex-wrap: wrap;
   gap: 10px;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border)
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r2) var(--r2) 0 0
 }
 
 .panel-head h2 {
@@ -870,6 +871,9 @@ table {
 }
 
 thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   padding: 8px 6px;
   text-align: left;
   font-size: 9px;
