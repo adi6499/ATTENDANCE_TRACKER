@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="obsidian">
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Smart Attendance System</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -11,19 +11,20 @@
 </head>
 
 <body>
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+  <div id="emp-sidebar" class="emp-sidebar">
+    <div class="sidebar-head">
+      <h3>Employee Summary</h3>
+      <button class="btn-close" onclick="closeSidebar()">&times;</button>
+    </div>
+    <div id="sidebar-content" class="sidebar-body"></div>
+  </div>
+
   <div class="app">
     <header class="topbar shell">
       <div class="topbar-brand">
         <div class="logo-mark">
-          <svg class="logo-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-            <path d="M2 17l10 5 10-5"></path>
-            <path d="M2 12l10 5 10-5"></path>
-          </svg>
-        </div>
-        <div class="topbar-text">
-          <h1>Jinharsh Attendance</h1>
-          <p>The standard for professional record keeping.</p>
+          <img src="logo.png" alt="Jinharsh Logo" class="logo-img">
         </div>
       </div>
       <div class="topbar-right">
@@ -44,7 +45,7 @@
       </div>
     </header>
 
-    <section class="workspace-head shell">
+    <section id="workspace-head" class="workspace-head shell">
       <div class="workspace-copy">
         <div class="workspace-title-row">
           <div class="ucard-ico xl sm">
@@ -134,160 +135,180 @@
         <span>Clear Session</span>
       </button>
       <div id="dl-wrap" class="download-wrap" style="display:none">
-        <button id="btn-dl" class="btn btn-success" type="button" onclick="downloadExcel()" style="display:none">
+        <button id="btn-print" class="btn btn-success" type="button" onclick="window.print()">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 9V2h12v7"></path>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <path d="M6 14h12v8H6z"></path>
+          </svg>
+          <span>Print Report</span>
+        </button>
+        <button id="btn-dl" class="btn btn-primary" type="button" onclick="downloadExcel()">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 4v11"></path>
             <path d="m7 11 5 5 5-5"></path>
-            <path d="M5 20h14"></path>
+            <path d="M4 15v4h16v-4"></path>
           </svg>
           <span>Download Excel</span>
         </button>
-        <div id="dl-gate" class="dl-gate">
-          <span>Set both date filters to enable export.</span>
-        </div>
       </div>
     </div>
+  </div>
 
-    <section id="prog-wrap" class="prog-wrap shell">
-      <div class="prog-lbl">
-        <strong id="prog-msg">Preparing...</strong>
-        <span id="prog-pct">0%</span>
-      </div>
-      <div class="prog-track">
-        <div id="prog-fill" class="prog-fill"></div>
-      </div>
-    </section>
-
-    <section id="stats-row">
-      <article class="kpi kpi-employees">
-        <div class="kpi-head">
-          <div class="kpi-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9.5" cy="7" r="3"></circle>
-              <path d="M20 8v6"></path>
-              <path d="M23 11h-6"></path>
-            </svg>
-          </div>
-          <div class="kpi-lbl">Employees</div>
-        </div>
-        <div id="st-emp" class="kpi-val">0</div>
-        <div id="st-emp-sub" class="kpi-sub">0 total records</div>
-      </article>
-      <article class="kpi kpi-days">
-        <div class="kpi-head">
-          <div class="kpi-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="18" rx="3"></rect>
-              <path d="M8 2v4"></path>
-              <path d="M16 2v4"></path>
-              <path d="M3 10h18"></path>
-            </svg>
-          </div>
-          <div class="kpi-lbl">Days</div>
-        </div>
-        <div id="st-days" class="kpi-val">0</div>
-        <div id="st-days-sub" class="kpi-sub">unique dates</div>
-      </article>
-      <article class="kpi kpi-att">
-        <div class="kpi-head">
-          <div class="kpi-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m5 13 4 4L19 7"></path>
-            </svg>
-          </div>
-          <div class="kpi-lbl">Attendance</div>
-        </div>
-        <div id="st-att" class="kpi-val">0%</div>
-        <div id="st-att-sub" class="kpi-sub">0 present days</div>
-      </article>
-      <article class="kpi kpi-late">
-        <div class="kpi-head">
-          <div class="kpi-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path d="M12 7v6l4 2"></path>
-            </svg>
-          </div>
-          <div class="kpi-lbl">Late</div>
-        </div>
-        <div id="st-late" class="kpi-val">0</div>
-        <div id="st-late-sub" class="kpi-sub">0% of records</div>
-      </article>
-      <article class="kpi kpi-abs">
-        <div class="kpi-head">
-          <div class="kpi-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path d="m9 9 6 6"></path>
-              <path d="m15 9-6 6"></path>
-            </svg>
-          </div>
-          <div class="kpi-lbl">Absent</div>
-        </div>
-        <div id="st-abs" class="kpi-val">0</div>
-        <div id="st-abs-sub" class="kpi-sub">0% of records</div>
-      </article>
-    </section>
-
-    <section id="insights-panel" class="summary-grid" style="display:none"></section>
-
-    <div id="tabs-row" class="tabs-row shell">
-      <button class="tab active" type="button" onclick="switchTab('daily', this)">
-        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 6h16"></path>
-          <path d="M4 12h16"></path>
-          <path d="M4 18h16"></path>
-        </svg>
-        Daily
-        <span id="tb-daily" class="tab-badge">0</span>
-      </button>
-      <button class="tab" type="button" onclick="switchTab('summary', this)">
-        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="4" y="5" width="6" height="14" rx="1"></rect>
-          <rect x="14" y="5" width="6" height="8" rx="1"></rect>
-          <rect x="14" y="15" width="6" height="4" rx="1"></rect>
-        </svg>
-        Summary
-        <span id="tb-summary" class="tab-badge">0</span>
-      </button>
-      <button class="tab" type="button" onclick="switchTab('late', this)">
-        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="8"></circle>
-          <path d="M12 8v4l3 2"></path>
-        </svg>
-        Late
-        <span id="tb-late" class="tab-badge">0</span>
-      </button>
-      <button class="tab" type="button" onclick="switchTab('absent', this)">
-        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="8"></circle>
-          <path d="m9 9 6 6"></path>
-          <path d="m15 9-6 6"></path>
-        </svg>
-        Absent
-        <span id="tb-absent" class="tab-badge">0</span>
-      </button>
-      <button class="tab" type="button" onclick="switchTab('early', this)">
-        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 12H6"></path>
-          <path d="m11 7-5 5 5 5"></path>
-        </svg>
-        Early Exit
-        <span id="tb-early" class="tab-badge">0</span>
-      </button>
+  <section id="prog-wrap" class="prog-wrap shell">
+    <div class="prog-lbl">
+      <strong id="prog-msg">Preparing...</strong>
+      <span id="prog-pct">0%</span>
     </div>
+    <div class="prog-track">
+      <div id="prog-fill" class="prog-fill"></div>
+    </div>
+  </section>
 
-    <section id="tab-daily" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2 id="daily-title">Daily Attendance Records</h2>
-        <div class="search-wrap">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="11" cy="11" r="6"></circle>
-            <path d="m20 20-4.35-4.35"></path>
+  <section id="stats-row">
+    <article class="kpi kpi-employees">
+      <div class="kpi-head">
+        <div class="kpi-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9.5" cy="7" r="3"></circle>
+            <path d="M20 8v6"></path>
+            <path d="M23 11h-6"></path>
           </svg>
-          <input id="search" class="search-inp" type="search" placeholder="Search employee or ID"
-            oninput="applyFilters()">
+        </div>
+        <div class="kpi-lbl">Employees</div>
+      </div>
+      <div id="st-emp" class="kpi-val">0</div>
+      <div id="st-emp-sub" class="kpi-sub">0 total records</div>
+    </article>
+    <article class="kpi kpi-days">
+      <div class="kpi-head">
+        <div class="kpi-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="3"></rect>
+            <path d="M8 2v4"></path>
+            <path d="M16 2v4"></path>
+            <path d="M3 10h18"></path>
+          </svg>
+        </div>
+        <div class="kpi-lbl">Days</div>
+      </div>
+      <div id="st-days" class="kpi-val">0</div>
+      <div id="st-days-sub" class="kpi-sub">unique dates</div>
+      <div class="kpi-chart"><svg id="sp-days" class="sparkline"></svg></div>
+    </article>
+    <article class="kpi kpi-att">
+      <div class="kpi-head">
+        <div class="kpi-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m5 13 4 4L19 7"></path>
+          </svg>
+        </div>
+        <div class="kpi-lbl">Attendance</div>
+      </div>
+      <div id="st-att" class="kpi-val">0%</div>
+      <div id="st-att-sub" class="kpi-sub">0 present days</div>
+      <div class="kpi-chart"><svg id="sp-att" class="sparkline"></svg></div>
+    </article>
+    <article class="kpi kpi-late" onclick="quickFilter('Late')" style="cursor:pointer">
+      <div class="kpi-head">
+        <div class="kpi-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 7v6l4 2"></path>
+          </svg>
+        </div>
+        <div class="kpi-lbl">Late</div>
+      </div>
+      <div id="st-late" class="kpi-val">0</div>
+      <div id="st-late-sub" class="kpi-sub">0% of records</div>
+      <div class="kpi-chart"><svg id="sp-late" class="sparkline"></svg></div>
+    </article>
+    <article class="kpi kpi-abs" onclick="quickFilter('Absent')" style="cursor:pointer">
+      <div class="kpi-head">
+        <div class="kpi-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="m9 9 6 6"></path>
+            <path d="m15 9-6 6"></path>
+          </svg>
+        </div>
+        <div class="kpi-lbl">Absent</div>
+      </div>
+      <div id="st-abs" class="kpi-val">0</div>
+      <div id="st-abs-sub" class="kpi-sub">0% of records</div>
+      <div class="kpi-chart"><svg id="sp-abs" class="sparkline"></svg></div>
+    </article>
+  </section>
+
+  <section id="insights-panel" class="summary-grid" style="display:none"></section>
+
+  <div id="tabs-row" class="tabs-row shell">
+    <button class="tab active" type="button" onclick="switchTab('daily', this)">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h16"></path>
+        <path d="M4 12h16"></path>
+        <path d="M4 18h16"></path>
+      </svg>
+      Daily
+      <span id="tb-daily-badge" class="tab-badge">0</span>
+    </button>
+    <button class="tab" type="button" onclick="switchTab('summary', this)">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="5" width="6" height="14" rx="1"></rect>
+        <rect x="14" y="5" width="6" height="8" rx="1"></rect>
+        <rect x="14" y="15" width="6" height="4" rx="1"></rect>
+      </svg>
+      Summary
+      <span id="tb-summary" class="tab-badge">0</span>
+    </button>
+    <button class="tab" type="button" onclick="switchTab('late', this)">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="M12 8v4l3 2"></path>
+      </svg>
+      Late
+      <span id="tb-late" class="tab-badge">0</span>
+    </button>
+    <button class="tab" type="button" onclick="switchTab('absent', this)">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="m9 9 6 6"></path>
+        <path d="m15 9-6 6"></path>
+      </svg>
+      Absent
+      <span id="tb-absent" class="tab-badge">0</span>
+    </button>
+    <button class="tab" type="button" onclick="switchTab('early', this)">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20 12H6"></path>
+        <path d="m11 7-5 5 5 5"></path>
+      </svg>
+      Early Exit
+      <span id="tb-early" class="tab-badge">0</span>
+    </button>
+  </div>
+  <section id="tab-daily" class="panel shell" style="display:none">
+    <div class="sticky-header-daily">
+      <div class="panel-head" style="padding: 12px 20px 8px;">
+        <div class="daily-header-flex">
+          <h2 id="daily-title" style="margin:0; font-size: 1.15rem;">Daily Attendance Records (<span
+              id="tb-daily-title-count">0</span>)</h2>
+          <div class="daily-tools">
+            <div class="shortcut-grp">
+              <button class="btn-s" type="button" onclick="setDateRange('7d')">7D</button>
+              <button class="btn-s" type="button" onclick="setDateRange('30d')">30D</button>
+              <button class="btn-s" type="button" onclick="setDateRange('month')">Month</button>
+              <button class="btn-s" type="button" onclick="setDateRange('clear')">Reset</button>
+            </div>
+            <div class="search-mini">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input id="search" type="search" placeholder="Search employee..." oninput="applyFilters()">
+            </div>
+          </div>
         </div>
       </div>
       <div class="filter-bar">
@@ -302,117 +323,166 @@
           <input id="date-to" class="date-inp" type="date" onchange="applyFilters()">
         </div>
       </div>
-      <div class="table-wrap">
-        <table>
+      <div class="daily-column-bar">
+        <table class="daily-table daily-table-headcopy" aria-hidden="true">
+          <colgroup>
+            <col class="c-emp">
+            <col class="c-br">
+            <col class="c-dt">
+            <col class="c-in">
+            <col class="c-out">
+            <col class="c-h">
+            <col class="c-ov">
+            <col class="c-st">
+            <col class="c-gp">
+            <col class="c-ei">
+            <col class="c-lt">
+            <col class="c-el">
+          </colgroup>
           <thead>
             <tr>
               <th class="c-emp" onclick="sortBy('name')">Employee</th>
-              <th class="c-br" onclick="sortBy('branch')">Branch</th>
-              <th class="c-dp" onclick="sortBy('department')">Department</th>
-              <th class="c-dt" onclick="sortBy('date')">Date</th>
-              <th class="c-dy" onclick="sortBy('day')">Day</th>
+              <th class="c-br" onclick="sortBy('branch')">Branch/Dept</th>
+              <th class="c-dt" onclick="sortBy('date')">Date (Day)</th>
               <th class="c-in" onclick="sortBy('firstIn')">In</th>
               <th class="c-out" onclick="sortBy('lastOut')">Out</th>
-              <th class="c-h" onclick="sortBy('hoursWorked')">Hours</th>
+              <th class="c-h" onclick="sortBy('hoursWorked')">Hrs</th>
               <th class="c-ov" onclick="sortBy('overtime')">OT</th>
-              <th class="c-pc" onclick="sortBy('punchCount')">Punches</th>
               <th class="c-st" onclick="sortBy('status')">Status</th>
               <th class="c-gp" onclick="sortBy('gapMins')">Gap</th>
-              <th class="c-lt" onclick="sortBy('lateMins')">Late By</th>
+              <th class="c-ei" onclick="sortBy('earlyArrivalMins')">Early In</th>
+              <th class="c-lt" onclick="sortBy('lateMins')">Late</th>
               <th class="c-el" onclick="sortBy('earlyMins')">Early Out</th>
             </tr>
           </thead>
-          <tbody id="table-body"></tbody>
         </table>
       </div>
-      <div class="pagination">
-        <div id="page-info" class="page-info">No records</div>
-        <div id="page-ctrls" class="page-ctrls"></div>
-      </div>
-    </section>
+    </div>
 
-    <section id="tab-summary" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2>Employee Summary</h2>
-        <div class="search-wrap">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="11" cy="11" r="6"></circle>
-            <path d="m20 20-4.35-4.35"></path>
-          </svg>
-          <input id="search-summary" class="search-inp" type="search" placeholder="Search summary cards"
-            oninput="renderSummary()">
-        </div>
-      </div>
-      <div id="summary-grid" class="summary-grid"></div>
-    </section>
+    <div class="table-wrap">
+      <table class="daily-table">
+        <colgroup>
+          <col class="c-emp">
+          <col class="c-br">
+          <col class="c-dt">
+          <col class="c-in">
+          <col class="c-out">
+          <col class="c-h">
+          <col class="c-ov">
+          <col class="c-st">
+          <col class="c-gp">
+          <col class="c-ei">
+          <col class="c-lt">
+          <col class="c-el">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="c-emp" onclick="sortBy('name')">Employee</th>
+            <th class="c-br" onclick="sortBy('branch')">Branch/Dept</th>
+            <th class="c-dt" onclick="sortBy('date')">Date (Day)</th>
+            <th class="c-in" onclick="sortBy('firstIn')">In</th>
+            <th class="c-out" onclick="sortBy('lastOut')">Out</th>
+            <th class="c-h" onclick="sortBy('hoursWorked')">Hrs</th>
+            <th class="c-ov" onclick="sortBy('overtime')">OT</th>
+            <th class="c-st" onclick="sortBy('status')">Status</th>
+            <th class="c-gp" onclick="sortBy('gapMins')">Gap</th>
+            <th class="c-ei" onclick="sortBy('earlyArrivalMins')">Early In</th>
+            <th class="c-lt" onclick="sortBy('lateMins')">Late</th>
+            <th class="c-el" onclick="sortBy('earlyMins')">Early Out</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <div id="page-info" class="page-info">No records</div>
+      <div id="page-ctrls" class="page-ctrls"></div>
+    </div>
+  </section>
 
-    <section id="tab-late" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2>Late Arrivals</h2>
+  <section id="tab-summary" class="panel shell" style="display:none">
+    <div class="panel-head">
+      <h2>Employee Summary</h2>
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="6"></circle>
+          <path d="m20 20-4.35-4.35"></path>
+        </svg>
+        <input id="search-summary" class="search-inp" type="search" placeholder="Search summary cards"
+          oninput="renderSummary()">
       </div>
-      <div class="table-wrap">
-        <table class="late-table">
-          <thead>
-            <tr>
-              <th class="c-emp" onclick="sortSub('late', 'name')">Employee</th>
-              <th class="c-br" onclick="sortSub('late', 'branch')">Branch</th>
-              <th class="c-dp" onclick="sortSub('late', 'department')">Department</th>
-              <th class="c-dt" onclick="sortSub('late', 'date')">Date</th>
-              <th class="c-dy" onclick="sortSub('late', 'day')">Day</th>
-              <th class="c-shft">Shift</th>
-              <th class="c-in" onclick="sortSub('late', 'firstIn')">Arrived</th>
-              <th class="c-lt" onclick="sortSub('late', 'lateMins')">Late By</th>
-            </tr>
-          </thead>
-          <tbody id="late-body"></tbody>
-        </table>
-      </div>
-    </section>
+    </div>
+    <div id="summary-leaderboard" class="summary-leaderboard"></div>
+    <div id="summary-grid" class="summary-grid"></div>
+  </section>
 
-    <section id="tab-absent" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2>Absent Employees</h2>
-      </div>
-      <div class="table-wrap">
-        <table class="absent-table">
-          <thead>
-            <tr>
-              <th class="c-emp" onclick="sortSub('absent', 'name')">Employee</th>
-              <th class="c-br" onclick="sortSub('absent', 'branch')">Branch</th>
-              <th class="c-dp" onclick="sortSub('absent', 'department')">Department</th>
-              <th class="c-dt" onclick="sortSub('absent', 'date')">Date</th>
-              <th class="c-dy" onclick="sortSub('absent', 'day')">Day</th>
-              <th class="c-shft">Shift</th>
-              <th class="c-st">Status</th>
-            </tr>
-          </thead>
-          <tbody id="absent-body"></tbody>
-        </table>
-      </div>
-    </section>
+  <section id="tab-late" class="panel shell" style="display:none">
+    <div class="panel-head">
+      <h2>Late Arrivals</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="late-table">
+        <thead>
+          <tr>
+            <th class="c-emp" onclick="sortSub('late', 'name')">Employee</th>
+            <th class="c-br" onclick="sortSub('late', 'branch')">Branch</th>
+            <th class="c-dp" onclick="sortSub('late', 'department')">Department</th>
+            <th class="c-dt" onclick="sortSub('late', 'date')">Date</th>
+            <th class="c-dy" onclick="sortSub('late', 'day')">Day</th>
+            <th class="c-shft">Shift</th>
+            <th class="c-in" onclick="sortSub('late', 'firstIn')">Arrived</th>
+            <th class="c-lt" onclick="sortSub('late', 'lateMins')">Late By</th>
+          </tr>
+        </thead>
+        <tbody id="late-body"></tbody>
+      </table>
+    </div>
+  </section>
 
-    <section id="tab-early" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2>Early Departures</h2>
-      </div>
-      <div class="table-wrap">
-        <table class="early-table">
-          <thead>
-            <tr>
-              <th class="c-emp" onclick="sortSub('early', 'name')">Employee</th>
-              <th class="c-br" onclick="sortSub('early', 'branch')">Branch</th>
-              <th class="c-dp" onclick="sortSub('early', 'department')">Department</th>
-              <th class="c-dt" onclick="sortSub('early', 'date')">Date</th>
-              <th class="c-dy" onclick="sortSub('early', 'day')">Day</th>
-              <th class="c-shft">Shift</th>
-              <th class="c-out" onclick="sortSub('early', 'lastOut')">Left At</th>
-              <th class="c-el" onclick="sortSub('early', 'earlyMins')">Left Early By</th>
-            </tr>
-          </thead>
-          <tbody id="early-body"></tbody>
-        </table>
-      </div>
-    </section>
+  <section id="tab-absent" class="panel shell" style="display:none">
+    <div class="panel-head">
+      <h2>Absent Employees</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="absent-table">
+        <thead>
+          <tr>
+            <th class="c-emp" onclick="sortSub('absent', 'name')">Employee</th>
+            <th class="c-br" onclick="sortSub('absent', 'branch')">Branch</th>
+            <th class="c-dp" onclick="sortSub('absent', 'department')">Department</th>
+            <th class="c-dt" onclick="sortSub('absent', 'date')">Date</th>
+            <th class="c-dy" onclick="sortSub('absent', 'day')">Day</th>
+            <th class="c-shft">Shift</th>
+            <th class="c-st">Status</th>
+          </tr>
+        </thead>
+        <tbody id="absent-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-early" class="panel shell" style="display:none">
+    <div class="panel-head">
+      <h2>Early Departures</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="early-table">
+        <thead>
+          <tr>
+            <th class="c-emp" onclick="sortSub('early', 'name')">Employee</th>
+            <th class="c-br" onclick="sortSub('early', 'branch')">Branch/Dept</th>
+            <th class="c-dt" onclick="sortSub('early', 'date')">Date (Day)</th>
+            <th class="c-shft">Shift</th>
+            <th class="c-in" onclick="sortSub('early', 'firstIn')">IN</th>
+            <th class="c-ei" onclick="sortSub('early', 'earlyArrivalMins')">Arrived Early</th>
+            <th class="c-out" onclick="sortSub('early', 'lastOut')">Left At</th>
+            <th class="c-el" onclick="sortSub('early', 'earlyMins')">Left Early By</th>
+          </tr>
+        </thead>
+        <tbody id="early-body"></tbody>
+      </table>
+    </div>
+  </section>
   </div>
 </body>
 

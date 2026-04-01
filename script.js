@@ -4,6 +4,7 @@ const S={
   sortCol:'date',sortDir:1,
   page:1,perPage:100,
   lateRecs:[],absentRecs:[],earlyRecs:[],
+  quickFilter:'',
   holidays:[
     {name:"Makarsankranti",d:"2026-01-14",b:["Gujarat"]},
     {name:"Republic Day",d:"2026-01-26",b:["Mumbai","Borivali","Nagpur","Gujarat","Goa"]},
@@ -43,26 +44,32 @@ const THEMES=[
   {id:'midnight',label:'Midnight'},
   {id:'sapphire',label:'Sapphire'}
 ];
+const STORAGE_KEYS={
+  records:'hr_att_v3',
+  ui:'hr_att_ui_v1'
+};
 
 function syncStickyLayout(){
   const root=document.documentElement;
-  const filterBar=document.querySelector('#tab-daily .filter-bar');
-  const desktop=window.innerWidth>768;
   const topbar=document.querySelector('.topbar');
-  const topbarHeight=topbar?topbar.getBoundingClientRect().height+8:0;
-  const filterHeight=desktop&&filterBar?Math.ceil(filterBar.getBoundingClientRect().height):0;
-  root.style.setProperty('--sticky-panel-top',topbarHeight+'px');
-  root.style.setProperty('--sticky-filter-height',filterHeight+'px');
+  const stickyHeader=document.querySelector('.sticky-header-daily');
+
+  const topbarBottom = (topbar && topbar.offsetParent !== null)
+    ? Math.max(0, Math.ceil(topbar.getBoundingClientRect().bottom))
+    : 0;
+  const headerRect = (stickyHeader && stickyHeader.offsetParent !== null)
+    ? stickyHeader.getBoundingClientRect()
+    : null;
+  const headerHeight = headerRect ? Math.ceil(headerRect.height) : 0;
+  const dailyTableTop = Math.max(0, topbarBottom + headerHeight - 1);
+
+  root.style.setProperty('--sticky-panel-top', topbarBottom + 'px');
+  root.style.setProperty('--sticky-filter-height', headerHeight + 'px');
+  root.style.setProperty('--sticky-daily-table-top', dailyTableTop + 'px');
 }
 
 function queueStickyLayoutSync(){
   window.requestAnimationFrame(syncStickyLayout);
-}
-
-function syncAppMode(){
-  const uploadSection=document.getElementById('upload-section');
-  const isReport=uploadSection && uploadSection.style.display==='none';
-  document.body.dataset.mode=isReport?'report':'start';
 }
 
 function getShiftDurationMinutes(shiftStart,shiftEnd){
@@ -84,6 +91,15 @@ function getEarlyMinutes(shiftStart,shiftEnd,outM){
   return Math.max(0,shiftEnd-outM);
 }
 
+function getEarlyArrivalMinutes(shiftStart, inM) {
+  if (shiftStart === null || inM === null) return 0;
+  const sStart = Number(shiftStart);
+  const inTime = Number(inM);
+  if (isNaN(sStart) || isNaN(inTime)) return 0;
+  // If inTime is before shiftStart, calculate the difference
+  return Math.max(0, sStart - inTime);
+}
+
 function getOvertimeMinutes(shiftStart,shiftEnd,outM,workedMins){
   if(outM==null)return 0;
   if(shiftStart==null || shiftEnd==null){
@@ -96,26 +112,24 @@ function getOvertimeMinutes(shiftStart,shiftEnd,outM,workedMins){
   return Math.max(0,outM-shiftEnd);
 }
 
-window.onload=()=>{
-  const savedTheme=localStorage.getItem('theme');
-  applyTheme(savedTheme==='dark'?'midnight':(savedTheme||'obsidian'));
-  const saved=localStorage.getItem('hr_att_v3');
-  if(saved){
-    try{
-      S.records=JSON.parse(saved);
-      document.getElementById('upload-section').style.display='none';
-      document.getElementById('btn-gen').style.display='none';
-      document.getElementById('btn-clear').style.display='flex';
-      buildReport();
-    }catch(e){localStorage.removeItem('hr_att_v3')}
-  }
+function initApp(){
   bindDatePickers();
   bindFilterMenus();
-  syncAppMode();
+
+  const savedTheme = localStorage.getItem('theme') || 'obsidian';
+  applyTheme(savedTheme);
+
+  const stickyHeader = document.querySelector('.sticky-header-daily');
+  if(stickyHeader) {
+    new ResizeObserver(() => syncStickyLayout()).observe(stickyHeader);
+  }
+
+  restoreSavedSession();
   queueStickyLayoutSync();
-};
+}
 
 window.addEventListener('resize',queueStickyLayoutSync);
+initApp();
 
 function toggleTheme(){
   const current=document.documentElement.getAttribute('data-theme')||'obsidian';
@@ -124,6 +138,9 @@ function toggleTheme(){
   applyTheme(next.id);
 }
 
+function timeToMins(t){if(!t)return null;const[h,m]=t.split(':').map(Number);return h*60+m}
+function minsToTime(m){if(m===null)return'--';const h=Math.floor(m/60),mm=Math.floor(m%60);return`${h.toString().padStart(2,'0')}:${mm.toString().padStart(2,'0')}`}
+
 function applyTheme(themeId){
   const theme=THEMES.find(t=>t.id===themeId)||THEMES[0];
   document.documentElement.setAttribute('data-theme',theme.id);
@@ -131,6 +148,103 @@ function applyTheme(themeId){
   localStorage.setItem('theme',theme.id);
   syncAppMode();
   queueStickyLayoutSync();
+}
+
+function getActiveTabName(){
+  const activeTab=document.querySelector('.tab.active');
+  const action=activeTab?.getAttribute('onclick')||'';
+  const match=action.match(/switchTab\('([^']+)'/);
+  return match?match[1]:'daily';
+}
+
+function getTabButton(name){
+  return document.querySelector(`.tab[onclick*="'${name}'"]`) || document.querySelector(`.tab[onclick*="${name}"]`);
+}
+
+function persistRecords(){
+  if(!S.records.length){
+    localStorage.removeItem(STORAGE_KEYS.records);
+    return;
+  }
+  localStorage.setItem(STORAGE_KEYS.records, JSON.stringify(S.records));
+}
+
+function persistUiState(){
+  if(!S.records.length){
+    localStorage.removeItem(STORAGE_KEYS.ui);
+    return;
+  }
+
+  const state={
+    search:document.getElementById('search')?.value||'',
+    branches:getSelectedValues('f-branch'),
+    departments:getSelectedValues('f-dept'),
+    statuses:getSelectedValues('f-status'),
+    employees:getSelectedValues('f-emp'),
+    dateFrom:document.getElementById('date-from')?.value||'',
+    dateTo:document.getElementById('date-to')?.value||'',
+    activeTab:getActiveTabName(),
+    quickFilter:S.quickFilter||''
+  };
+
+  localStorage.setItem(STORAGE_KEYS.ui, JSON.stringify(state));
+}
+
+function restoreUiState(){
+  const raw=localStorage.getItem(STORAGE_KEYS.ui);
+  if(!raw)return;
+
+  try{
+    const state=JSON.parse(raw);
+    const search=document.getElementById('search');
+    const dateFrom=document.getElementById('date-from');
+    const dateTo=document.getElementById('date-to');
+    S.quickFilter=state.quickFilter||'';
+
+    if(search)search.value=state.search||'';
+    if(dateFrom && state.dateFrom)dateFrom.value=state.dateFrom;
+    if(dateTo && state.dateTo)dateTo.value=state.dateTo;
+
+    setSelectedValues('f-branch',Array.isArray(state.branches)?state.branches:[]);
+    setSelectedValues('f-dept',Array.isArray(state.departments)?state.departments:[]);
+    setSelectedValues('f-status',Array.isArray(state.statuses)?state.statuses:[]);
+    setSelectedValues('f-emp',Array.isArray(state.employees)?state.employees:[]);
+
+    applyFilters();
+
+    const targetTab=['daily','summary','late','absent','early'].includes(state.activeTab)
+      ? state.activeTab
+      : 'daily';
+    const tabBtn=getTabButton(targetTab);
+    if(tabBtn)switchTab(targetTab,tabBtn);
+  }catch(err){
+    console.error('Failed to restore UI state.', err);
+    localStorage.removeItem(STORAGE_KEYS.ui);
+  }
+}
+
+function restoreSavedSession(){
+  const raw=localStorage.getItem(STORAGE_KEYS.records);
+  if(!raw)return;
+
+  try{
+    const parsed=JSON.parse(raw);
+    const records=Array.isArray(parsed)
+      ? parsed
+      : (parsed && Array.isArray(parsed.records) ? parsed.records : []);
+
+    if(!records.length)return;
+
+    S.records=records;
+    buildReport();
+    renderSparklines();
+    restoreUiState();
+    showToast('Saved session restored.');
+  }catch(err){
+    console.error('Failed to restore saved session.', err);
+    localStorage.removeItem(STORAGE_KEYS.records);
+    localStorage.removeItem(STORAGE_KEYS.ui);
+  }
 }
 
 function bindDatePickers(){
@@ -204,6 +318,10 @@ function refreshFilterButton(id){
   if(!btn)return;
   const label=FILTER_CONFIG[id].label;
   const selected=getSelectedValues(id);
+  if(id==='f-status' && S.quickFilter==='Late'){
+    btn.textContent='Late Arrivals';
+    return;
+  }
   btn.textContent=selected.length?`${label} (${selected.length})`:label;
 }
 
@@ -223,6 +341,7 @@ function toggleFilterMenu(id){
 
 function toggleFilterValue(id,value,checked){
   const selected=new Set(getSelectedValues(id));
+  if(id==='f-status')S.quickFilter='';
   if(checked)selected.add(value); else selected.delete(value);
   setSelectedValues(id,[...selected]);
   applyFilters();
@@ -231,13 +350,16 @@ function toggleFilterValue(id,value,checked){
 function setFilterAll(id,selectAll){
   const el=document.getElementById(id);
   const items=JSON.parse(el.dataset.items||'[]');
+  if(id==='f-status')S.quickFilter='';
   setSelectedValues(id,selectAll?items.map(item=>item.value):[]);
   applyFilters();
 }
 
 function clearData(){
   if(!confirm('Clear all data and restart?'))return;
-  localStorage.removeItem('hr_att_v3');location.reload();
+  localStorage.removeItem(STORAGE_KEYS.records);
+  localStorage.removeItem(STORAGE_KEYS.ui);
+  location.reload();
 }
 
 function handleFiles(files,type){
@@ -388,7 +510,7 @@ async function generateReport(){
         const dy=new Date(dt+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
         const sd=(info.shiftStart!==null&&info.shiftEnd!==null)?m2t(info.shiftStart)+' - '+m2t(info.shiftEnd):'--';
         
-        let first=null,last=null,hrs=0,inM=null,outM=null,status='Absent',lateMins=0,earlyMins=0,otMins=0;
+        let first=null,last=null,hrs=0,inM=null,outM=null,status='Absent',lateMins=0,earlyMins=0,earlyArrivalMins=0,otMins=0;
         const sDur=getShiftDurationMinutes(info.shiftStart,info.shiftEnd);
         
         const isHol=S.holidays.find(h=>{
@@ -410,46 +532,59 @@ async function generateReport(){
           inM=first.getHours()*60+first.getMinutes();
           outM=last.getHours()*60+last.getMinutes();
           status='Present';
-          lateMins=getLateMinutes(info.shiftStart,inM);
-          if(lateMins>15)status='Late';
-          earlyMins=getEarlyMinutes(info.shiftStart,info.shiftEnd,outM);
-          if(hrs<4.5)status='Half Day';
-          if(hrs<0.25 || ps.length===1)status='Missed Punch';
+          
+          const sSt = info.shiftStart;
+          const sEn = info.shiftEnd;
+
+          lateMins = getLateMinutes(sSt, inM);
+          if(lateMins>15) status='Late';
+          
+          earlyArrivalMins = getEarlyArrivalMinutes(sSt, inM);
+          earlyMins = getEarlyMinutes(sSt, sEn, outM);
+          
+          if(hrs<4.5) status='Half Day';
+          if(hrs<0.25 || ps.length===1) status='Missed Punch';
+          
           if(status!=='Missed Punch'){
-            // Overtime should reflect time worked beyond the scheduled shift end.
-            otMins=getOvertimeMinutes(info.shiftStart,info.shiftEnd,outM,workedMins);
+            otMins = getOvertimeMinutes(sSt, sEn, outM, workedMins);
           }
         }
         
-        // Gap: For Absent it's full shift, for WeekOff/Holiday it's 0, for Present it's Dur - Actual
         let gapMins=0;
-        if(status==='Absent')gapMins=sDur;
-        else if(status==='Present'||status==='Late'||status==='Late (Comp)'||status==='Half Day')gapMins=sDur-Math.round(hrs*60);
+        if(status==='Absent') gapMins=sDur;
+        else if(['Present','Late','Late (Comp)','Half Day'].includes(status)) gapMins=sDur-Math.round(hrs*60);
         
-        if(status==='Late'&&gapMins<=0)status='Late (Comp)';
+        if(status==='Late' && gapMins<=0) status='Late (Comp)';
         
         const gapFmt=gapMins===0?'0m':fmtD(Math.abs(gapMins));
         const gapClass=gapMins<=0?'g-ok':'g-err';
         
+        // Ensure strings are generated properly for UI
+        const lateStr = lateMins > 0 ? fmtD(lateMins) : '--';
+        const earlyStr = earlyMins > 0 ? fmtD(earlyMins) : '--';
+        const earlyArriveStr = earlyArrivalMins > 0 ? fmtD(earlyArrivalMins) : '--';
+
         S.records.push({
-          uid,name:info.name,branch:info.branch,department:info.department,
-          date:dt,day:dy,shiftDisplay:sd,
-          firstIn:ps.length?m2t(inM):'--',lastOut:ps.length?m2t(outM):'--',
-          hoursWorked:Math.round(hrs*100)/100,status,
-          lateMins,earlyMins,lateBy:fmtD(lateMins),earlyBy:fmtD(earlyMins),
-          otMins,overtime:fmtD(otMins),punchCount:ps.length,
-          gapMins,gapFmt,gapClass
+          uid, name: info.name, branch: info.branch, department: info.department,
+          date: dt, day: dy, shiftDisplay: sd,
+          firstIn: ps.length ? m2t(inM) : '--', lastOut: ps.length ? m2t(outM) : '--',
+          hoursWorked: Math.round(hrs*100)/100, status,
+          lateMins, earlyMins, earlyArrivalMins,
+          lateBy: lateStr, earlyBy: earlyStr, earlyArrivalBy: earlyArriveStr,
+          otMins, overtime: fmtD(otMins), punchCount: ps.length,
+          gapMins, gapFmt, gapClass
         });
       }
     }
     setProg(90,'Saving session...');
-    try{localStorage.setItem('hr_att_v3',JSON.stringify(S.records))}catch(e){}
+    buildReport();
+    renderSparklines();
     setProg(100,`Done - ${S.records.length} records processed.`);
     setTimeout(hideProg,1200);
     document.getElementById('upload-section').style.display='none';
+    document.getElementById('workspace-head').style.display='none';
     document.getElementById('btn-gen').style.display='none';
     document.getElementById('btn-clear').style.display='flex';
-    buildReport();
     syncAppMode();
     queueStickyLayoutSync();
   }catch(err){
@@ -472,17 +607,30 @@ function buildReport(){
   S.lateRecs=S.records.filter(r=>r.lateMins>0);
   S.absentRecs=S.records.filter(r=>r.status==='Absent');
   S.earlyRecs=S.records.filter(r=>r.earlyMins>0);
+  
+  // Auto-set dates to data range
+  const dates = S.records.map(r => r.date).filter(Boolean).sort();
+  if (dates.length) {
+    document.getElementById('date-from').value = dates[0];
+    document.getElementById('date-to').value = dates[dates.length - 1];
+  }
+
   document.getElementById('dl-wrap').style.display='flex';
   document.getElementById('stats-row').style.display='grid';
   document.getElementById('tabs-row').style.display='flex';
   document.getElementById('tab-daily').style.display='block';
-  document.getElementById('tb-daily').textContent=S.records.length;
+  const dBadge = document.getElementById('tb-daily-badge');
+  const dTitleCount = document.getElementById('tb-daily-title-count');
+  if(dBadge) dBadge.textContent = S.records.length;
+  if(dTitleCount) dTitleCount.textContent = S.records.length;
   document.getElementById('tb-summary').textContent=[...new Set(S.records.map(r=>r.uid))].size;
   document.getElementById('tb-late').textContent=S.lateRecs.length;
   document.getElementById('tb-absent').textContent=S.absentRecs.length;
   document.getElementById('tb-early').textContent=S.earlyRecs.length;
   S.filtered=[...S.records];S.page=1;
   renderStats(S.records);renderTable();renderSubTables();renderInsights();
+  persistRecords();
+  persistUiState();
   syncAppMode();
   queueStickyLayoutSync();
 }
@@ -490,7 +638,6 @@ function buildReport(){
 function detectMachineFailures(){
   const r=S.records; if(!r.length)return;
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Helper: is this date a holiday for this branch? Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   function isHolidayForBranch(date, branch){
     return S.holidays.some(h=>{
       const bMatch=h.b.some(b=>(branch||'').includes(b));
@@ -500,7 +647,6 @@ function detectMachineFailures(){
     });
   }
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 1: Group by date|branch, tracking absent + punched counts Ã¢â€â‚¬
   const grouped={};
   r.forEach(x=>{
     const bk=x.date+'|'+(x.branch||'Default');
@@ -510,63 +656,43 @@ function detectMachineFailures(){
     };
     grouped[bk].total++;
     if(x.status==='Absent') grouped[bk].absent++;
-    // "punched" = anyone who actually had at least 1 swipe (not Absent/Holiday/WeekOff)
     if(!['Absent','Week Off','Holiday','System Error'].includes(x.status)) grouped[bk].punched++;
   });
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 2: Evaluate each branch-day for anomaly Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   S.failureDates=[];
   Object.keys(grouped).forEach(bk=>{
     const g=grouped[bk];
     const dy=new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
-
-    // Guard 1: Skip weekends (Sun & Sat handled by Week Off status, but check Sunday explicitly)
     if(dy==='Sun') return;
-
-    // Guard 2: Skip recognized holidays for this branch
     if(isHolidayForBranch(g.date, g.branch)) return;
-
-    // Guard 3: Need at least 3 people in the branch to avoid false positives
     if(g.total < 3) return;
-
     const absentRate = g.absent / g.total;
-
-    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 1 Ã¢â‚¬â€ Zero Punch Day Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    // If NOBODY in the branch punched at all Ã¢â€ â€™ 100% machine failure
     const isZeroPunchDay = g.punched === 0 && g.absent >= 3;
-
-    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 2 Ã¢â‚¬â€ Near-Zero Punch Day Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    // 1 or 2 people punched but the rest are absent Ã¢â€ â€™ almost certainly a glitch
-    // (e.g. manager arrived early before machine died, or used manual entry)
     const isNearZeroDay = g.punched <= 2 && g.absent >= 3 && absentRate >= 0.80;
-
-    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 3 Ã¢â‚¬â€ High Absence Spike Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    // Ã¢â€°Â¥40% absent AND at least 3 people affected.
-    // 40% is chosen because genuine mass-absence on a normal working day is very rare.
     const isHighSpike = absentRate >= 0.40 && g.absent >= 3;
-
-    // Ã¢â€â‚¬Ã¢â€â‚¬ TIER 4 Ã¢â‚¬â€ Moderate Spike with large branch Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    // Branch has 10+ people and Ã¢â€°Â¥30% absent Ã¢â‚¬â€ statistically improbable without a glitch
     const isModerateSpike = g.total >= 10 && absentRate >= 0.30 && g.absent >= 4;
-
     const isAnomaly = isZeroPunchDay || isNearZeroDay || isHighSpike || isModerateSpike;
 
     if(isAnomaly){
-      // Determine the confidence reason for the insight panel
       let reason='high absence spike';
       if(isZeroPunchDay)       reason='zero punch day (total machine failure)';
       else if(isNearZeroDay)   reason='near-zero punches (likely machine failure)';
       else if(isHighSpike)     reason=`${Math.round(absentRate*100)}% absence spike`;
       else if(isModerateSpike) reason=`${Math.round(absentRate*100)}% absence in large branch`;
 
-      S.failureDates.push({date:g.date, branch:g.branch, reason, affected:g.absent, total:g.total});
+      S.failureDates.push({
+        date: g.date, 
+        branch: g.branch || 'Unknown Branch', 
+        reason, 
+        affected: g.absent, 
+        total: g.total,
+        pct: Math.round(absentRate * 100)
+      });
 
-      // Reclassify all Absent records for this branch+date to System Error
       r.forEach(x=>{
         if(x.date===g.date && x.branch===g.branch && x.status==='Absent'){
           x.status='System Error';
           x.gapMins=0; x.gapFmt='0m'; x.gapClass='g-ok';
-          // Clear late/early metrics Ã¢â‚¬â€ these aren't meaningful for a system error
           x.lateMins=0; x.earlyMins=0; x.lateBy='--'; x.earlyBy='--';
         }
       });
@@ -575,7 +701,8 @@ function detectMachineFailures(){
 }
 
 function quickFilter(s){
-  setSelectedValues('f-status',[s]);
+  S.quickFilter=s==='Late'?'Late':'';
+  setSelectedValues('f-status',s==='Late'?[]:[s]);
   document.querySelectorAll('.mfilter.open').forEach(el=>el.classList.remove('open'));
   switchTab('daily', document.querySelector('[onclick*="switchTab(\'daily\'"]'));
   applyFilters();
@@ -585,8 +712,6 @@ function renderInsights(){
   const r=S.records; if(!r.length)return;
   const ins=document.getElementById('insights-panel'); ins.style.display='grid';
   const dash=v=>v||'<span class="dash">--</span>';
-  
-  // Logic: Top Branch (Highest Attendance %)
   const brData={}; 
   r.forEach(x=>{
     if(!x.branch)return;
@@ -600,59 +725,26 @@ function renderInsights(){
     if(pct>topPct){topPct=pct; topBr=b;}
   });
 
-  // Logic: Lateness Trend
   const latePct=Math.round((S.lateRecs.length/r.length)*100);
   const totalAtt=Math.round((r.filter(x=>x.status==='Present'||x.status==='Late').length/r.length)*100);
 
   ins.innerHTML=`
     <div class="insight-item">
-      <div class="insight-icon">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3 14.8 8.7 21 9.5l-4.5 4.3 1.1 6.2L12 17.1 6.4 20l1.1-6.2L3 9.5l6.2-.8z"></path>
-        </svg>
-      </div>
-      <div class="insight-copy">
-        <span class="insight-kicker">Top Branch</span>
-        <div class="insight-txt"><strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div>
-      </div>
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14.8 8.7 21 9.5l-4.5 4.3 1.1 6.2L12 17.1 6.4 20l1.1-6.2L3 9.5l6.2-.8z"></path></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">Top Branch</span><div class="insight-txt"><strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div></div>
     </div>
     <div class="insight-item">
-      <div class="insight-icon">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 18h16"></path>
-          <path d="M7 14 10 11l3 2 4-5"></path>
-        </svg>
-      </div>
-      <div class="insight-copy">
-        <span class="insight-kicker">Stability</span>
-        <div class="insight-txt"><strong>${totalAtt}%</strong> overall attendance. ${totalAtt>85?'Very healthy.':'Needs review.'}</div>
-      </div>
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h16"></path><path d="M7 14 10 11l3 2 4-5"></path></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">Stability</span><div class="insight-txt"><strong>${totalAtt}%</strong> overall attendance. ${totalAtt>85?'Very healthy.':'Needs review.'}</div></div>
     </div>
     ${S.failureDates.length ? `
     <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
-      <div class="insight-icon">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 9v4"></path>
-          <path d="M12 17h.01"></path>
-          <path d="M10.3 4.9 2.6 18.2a1 1 0 0 0 .9 1.5h17a1 1 0 0 0 .9-1.5L13.7 4.9a1 1 0 0 0-1.7 0z"></path>
-        </svg>
-      </div>
-      <div class="insight-copy">
-        <span class="insight-kicker">System Alert</span>
-        <div class="insight-txt"><strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong>. Click to review System Error rows.</div>
-      </div>
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 4.9 2.6 18.2a1 1 0 0 0 .9 1.5h17a1 1 0 0 0 .9-1.5L13.7 4.9a1 1 0 0 0-1.7 0z"></path></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">System Alert</span><div class="insight-txt"><strong>${S.failureDates.length} incident${S.failureDates.length>1?'s':''}</strong> across <strong>${[...new Set(S.failureDates.map(f=>f.branch))].length} branch${[...new Set(S.failureDates.map(f=>f.branch))].length>1?'es':''}</strong>. Click to review System Error rows.</div></div>
     </div>` : `
     <div class="insight-item">
-      <div class="insight-icon">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="8"></circle>
-          <path d="M12 8v4l3 2"></path>
-        </svg>
-      </div>
-      <div class="insight-copy">
-        <span class="insight-kicker">Punctuality</span>
-        <div class="insight-txt"><strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline.':'Review shift overlaps.'}</div>
-      </div>
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">Punctuality</span><div class="insight-txt"><strong>${latePct}%</strong> of records are late. ${latePct<10?'Excellent discipline.':'Review shift overlaps.'}</div></div>
     </div>
     `}
   `;
@@ -663,7 +755,43 @@ function switchTab(name,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   if(name==='summary')renderSummary();
+  persistUiState();
   queueStickyLayoutSync();
+}
+
+function syncAppMode() {
+  const hasData = S.records.length > 0;
+  
+  // Hide instructions when data is active
+  const head = document.getElementById('workspace-head');
+  if (head) head.style.display = hasData ? 'none' : 'flex';
+  
+  // Hide upload section when data is active
+  const up = document.getElementById('upload-section');
+  if (up) up.style.display = hasData ? 'none' : 'grid';
+
+  const btnGen = document.getElementById('btn-gen');
+  if (btnGen) btnGen.style.display = hasData ? 'none' : '';
+
+  const btnClear = document.getElementById('btn-clear');
+  if (btnClear) btnClear.style.display = hasData ? 'flex' : 'none';
+
+  if (!hasData) return;
+  
+  // Highlight active filters
+  ['f-branch', 'f-dept', 'f-status', 'f-emp'].forEach(id => {
+    const wrap = document.getElementById(id);
+    if (!wrap) return;
+    const btn = wrap.querySelector('.mfilter-btn');
+    if (btn) {
+      const selected = getSelectedValues(id);
+      const isQuickLate=id==='f-status' && S.quickFilter==='Late';
+      btn.classList.toggle('active', selected.length > 0 || isQuickLate);
+    }
+  });
+
+  const dlWrap = document.getElementById('dl-wrap');
+  if (dlWrap) dlWrap.style.display = hasData ? 'flex' : 'none';
 }
 
 function applyFilters(){
@@ -674,9 +802,9 @@ function applyFilters(){
   const empIds=getSelectedValues('f-emp');
   const fv=document.getElementById('date-from').value;
   const tv=document.getElementById('date-to').value;
-  const hasDates=fv&&tv;
-  document.getElementById('btn-dl').style.display=hasDates?'inline-flex':'none';
-  document.getElementById('dl-gate').style.display=hasDates?'none':'inline-flex';
+  const hasData = S.records.length > 0;
+  const dlWrap = document.getElementById('dl-wrap');
+  if (dlWrap) dlWrap.style.display = hasData ? 'flex' : 'none';
   let from=-Infinity,to=Infinity;
   if(fv)from=new Date(fv).setHours(0,0,0,0);
   if(tv)to=new Date(tv).setHours(23,59,59,999);
@@ -686,6 +814,7 @@ function applyFilters(){
     if(branches.length&& !branches.includes(r.branch))return false;
     if(depts.length&& !depts.includes(r.department))return false;
     if(statuses.length&& !statuses.includes(r.status))return false;
+    if(S.quickFilter==='Late' && !(Number(r.lateMins||0)>0))return false;
     if(empIds.length&& !empIds.includes(r.uid))return false;
     const rt=new Date(r.date).getTime();
     if(fv&&rt<from)return false;
@@ -697,7 +826,10 @@ function applyFilters(){
   S.absentRecs=S.filtered.filter(r=>r.status==='Absent');
   S.earlyRecs=S.filtered.filter(r=>r.earlyMins>0);
   
-  document.getElementById('tb-daily').textContent=S.filtered.length;
+  const dBadge = document.getElementById('tb-daily-badge');
+  const dTitleCount = document.getElementById('tb-daily-title-count');
+  if(dBadge) dBadge.textContent = S.filtered.length;
+  if(dTitleCount) dTitleCount.textContent = S.filtered.length;
   document.getElementById('tb-summary').textContent=[...new Set(S.filtered.map(r=>r.uid))].size;
   document.getElementById('tb-late').textContent=S.lateRecs.length;
   document.getElementById('tb-absent').textContent=S.absentRecs.length;
@@ -708,54 +840,55 @@ function applyFilters(){
   
   document.getElementById('daily-title').textContent=
     S.filtered.length===S.records.length?'Daily Attendance Records':`Daily Attendance Records (${S.filtered.length} filtered)`;
+  persistUiState();
+  syncAppMode();
 }
 
 function sortBy(col){
   S.sortDir=S.sortCol===col?S.sortDir*-1:1;S.sortCol=col;
   S.filtered.sort((a,b)=>{
     const av=a[col]??'',bv=b[col]??'';
-    if(['hoursWorked','lateMins','earlyMins','gapMins'].includes(col))return(Number(av)-Number(bv))*S.sortDir;
+    if(['hoursWorked','lateMins','earlyMins','gapMins','earlyArrivalMins'].includes(col))return(Number(av)-Number(bv))*S.sortDir;
     return String(av).localeCompare(String(bv))*S.sortDir;
   });
   renderTable();
 }
 function sortSub(type,col){
   const arr=type==='late'?S.lateRecs:type==='absent'?S.absentRecs:S.earlyRecs;
-  arr.sort((a,b)=>['lateMins','earlyMins'].includes(col)?(Number(a[col]||0)-Number(b[col]||0)):String(a[col]||'').localeCompare(String(b[col]||'')));
+  arr.sort((a,b)=>['lateMins','earlyMins','earlyArrivalMins'].includes(col)?(Number(a[col]||0)-Number(b[col]||0)):String(a[col]||'').localeCompare(String(b[col]||'')));
   renderSubTables();
 }
 
 function renderTable(){
   const total=S.filtered.length,start=(S.page-1)*S.perPage;
   const slice=S.filtered.slice(start,start+S.perPage);
-  const bdg=s=>{const m={Present:'present',Late:'late',Absent:'absent','Half Day':'half','Missed Punch':'missed','Week Off':'weekoff','Holiday':'holiday','Late (Comp)':'late-comp','System Error':'syserr'};return`<span class="badge b-${m[s]||'present'}">${s}</span>`};
+  const bdg=s=>{const m={Present:'present',Late:'late',Absent:'absent','Half Day':'half','Missed Punch':'missed','Week Off':'weekoff','Holiday':'holiday','Late (Comp)':'late-comp','System Error':'syserr'};return`<span class="badge b-${m[s]||'present'}" data-status="${s}">${s}</span>`};
   const hc=h=>h>=8?'h-ok':h>=4?'h-low':'h-zero';
   document.getElementById('table-body').innerHTML=slice.map((r,i)=>`
 <tr onclick="toggleExp(${start+i})" id="row-${start+i}" style="animation-delay: ${i*0.04}s">
-  <td class="td-emp" data-label="Employee"><strong>${r.name}</strong><small>ID ${r.uid}</small></td>
-  <td title="${r.branch}" data-label="Branch">${r.branch||'<span class="dash">--</span>'}</td>
-  <td title="${r.department}" data-label="Department">${r.department||'<span class="dash">--</span>'}</td>
-  <td class="mono" data-label="Date">${r.date}</td>
-  <td style="color:var(--ink3);font-size:12px" data-label="Day">${r.day}</td>
+  <td class="td-emp" data-label="Employee" onclick="event.stopPropagation();showEmpProfile('${r.uid}')" style="cursor:pointer">
+    <strong>${r.name}</strong><small>ID ${r.uid}</small>
+  </td>
+  <td title="${r.branch} / ${r.department}" data-label="Branch/Dept"><div class="org-cell"><strong>${r.branch||'--'}</strong><small>${r.department||'--'}</small></div></td>
+  <td class="date-cell" data-label="Date"><span class="date-main mono">${r.date}</span><span class="day-span">${r.day}</span></td>
   <td class="mono" data-label="In">${r.firstIn}</td>
   <td class="mono" data-label="Out">${r.lastOut}</td>
-  <td class="mono ${hc(r.hoursWorked)}" data-label="Hours">${r.hoursWorked}h</td>
-  <td class="overtime-v" data-label="Overtime">${r.otMins>0?r.overtime:'<span class="dash">--</span>'}</td>
-  <td class="mono" data-label="Punches">${r.punchCount}</td>
+  <td class="mono ${hc(r.hoursWorked)}" data-label="Hrs">${r.hoursWorked}h</td>
+  <td class="overtime-v ${r.otMins>120?'high-ot':''}" data-label="OT">${r.otMins>0?r.overtime:'--'}</td>
   <td data-label="Status">${bdg(r.status)}</td>
   <td class="${r.gapClass}" data-label="Gap">${r.gapMins<=0?'-':''}${r.gapFmt}</td>
-  <td class="late-v" data-label="Late By">${r.lateMins>0?r.lateBy:'<span class="dash">--</span>'}</td>
-  <td class="early-v" data-label="Early Out">${r.earlyMins>0?r.earlyBy:'<span class="dash">--</span>'}</td>
+  <td class="mono early-in-v" data-label="Early In">${r.earlyArrivalBy}</td>
+  <td class="late-v" data-label="Late">${r.lateMins>0?r.lateBy:'--'}</td>
+  <td class="early-v" data-label="Early Out">${r.earlyMins>0?r.earlyBy:'--'}</td>
 </tr>
 <tr class="exp-row" id="exp-${start+i}">
   <td class="exp-cell" colspan="14">
     <div class="exp-inner">
       <div class="exp-stat"><label>Shift</label><span>${r.shiftDisplay}</span></div>
-      <div class="exp-stat"><label>Total Punches</label><span>${r.punchCount}</span></div>
+      <div class="exp-stat"><label>Arrived Early</label><span class="early-in-v">${r.earlyArrivalMins>0?r.earlyArrivalBy:'0m'}</span></div>
       <div class="exp-stat"><label>Overtime</label><span class="overtime-v">${r.otMins>0?r.overtime:'0m'}</span></div>
       <div class="exp-stat"><label>Hours Worked</label><span class="${hc(r.hoursWorked)}">${r.hoursWorked}h</span></div>
-      <div class="exp-stat"><label>Department</label><span>${r.department||'--'}</span></div>
-      <div class="exp-stat"><label>Branch</label><span>${r.branch||'--'}</span></div>
+      <div class="exp-stat"><label>Gap Time</label><span class="${r.gapClass}">${r.gapFmt}</span></div>
     </div>
   </td>
 </tr>`).join('');
@@ -790,7 +923,6 @@ function renderStats(recs){
   const present=recs.filter(r=>['Present','Late','Late (Comp)'].includes(r.status)).length;
   const late=recs.filter(r=>r.lateMins>0).length;
   const absent=recs.filter(r=>r.status==='Absent').length;
-  // Use non-system-error total for accurate attendance KPI
   const validRecs=recs.filter(r=>r.status!=='System Error').length;
   const pct=validRecs?Math.round(present/validRecs*100):0;
   document.getElementById('st-emp').textContent=empSet.size;
@@ -809,46 +941,179 @@ const CLR=['#1B4FD8','#0B7B60','#8A5A00','#5B3FA6','#C0280C','#3E4B66'];
 function avatarCol(n){return CLR[n.charCodeAt(0)%CLR.length]}
 function initials(n){return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
 
-function renderSummary(){
-  const q=(document.getElementById('search-summary').value||'').toLowerCase();
-  const map={};
-  S.records.forEach(r=>{
-    if(!map[r.uid])map[r.uid]={uid:r.uid,name:r.name,branch:r.branch,dept:r.department,
-      present:0,late:0,half:0,absent:0,days:0,hrs:0};
-    const s=map[r.uid]; s.hrs+=r.hoursWorked;
-    if(r.status==='System Error')return;
-    s.days++;
-    if(r.status==='Present')s.present++;
-    else if(r.status==='Late'||r.status==='Late (Comp)'){s.present++;s.late++}
-    else if(r.status==='Half Day')s.half++;
-    else if(r.status==='Absent')s.absent++;
+function renderSummary() {
+  const r = S.filtered;
+  const container = document.getElementById('tab-summary');
+  const searchVal = (document.getElementById('search-summary')?.value || '').toLowerCase();
+  
+  if (!r.length) {
+    container.innerHTML = '<div class="empty-state">No data for summary</div>';
+    return;
+  }
+
+  // Generate Branch Leaderboard
+  const brs = {};
+  r.forEach(x => {
+    if (!x.branch) return;
+    if (!brs[x.branch]) brs[x.branch] = { name: x.branch, total: 0, att: 0, ot: 0 };
+    brs[x.branch].total++;
+    if (['Present', 'Late'].includes(x.status)) brs[x.branch].att++;
+    brs[x.branch].ot += (x.otMins || 0);
   });
-  let emps=Object.values(map);
-  if(q)emps=emps.filter(e=>e.name.toLowerCase().includes(q)||e.uid.includes(q));
-  emps.sort((a,b)=>a.name.localeCompare(b.name));
-  document.getElementById('summary-grid').innerHTML=emps.map((e,i)=>{
-    const p=e.days?Math.round(e.present/e.days*100):0;
-    const avg=e.days?Math.round(e.hrs/e.days*10)/10:0;
-    const col=avatarCol(e.name);
-    return `<div class="emp-card anim-fade" style="animation-delay: ${Math.min(i*0.05, 1)}s">
-      <div class="emp-card-head">
-        <div class="avatar" style="background:${col}22;color:${col}">${initials(e.name)}</div>
-        <div class="emp-card-info"><h4 title="${e.name}">${e.name}</h4><small>ID ${e.uid}</small></div>
+
+  const sortedBr = Object.values(brs).map(b => ({
+    ...b,
+    score: Math.round((b.att / b.total) * 100),
+    avgOt: Math.round(b.ot / b.total)
+  })).sort((a,b) => b.score - a.score);
+
+  // Group by Employee for the Summary Table
+  const empSummary = {};
+  r.forEach(x => {
+    if (!empSummary[x.uid]) {
+      empSummary[x.uid] = { 
+        uid: x.uid, 
+        name: x.name, 
+        branch: x.branch, 
+        dept: x.department, 
+        total: 0, 
+        present: 0, 
+        late: 0, 
+        ot: 0 
+      };
+    }
+    const s = empSummary[x.uid];
+    s.total++;
+    if (['Present', 'Late', 'Late (Comp)'].includes(x.status)) s.present++;
+    if (x.lateMins > 0) s.late++;
+    s.ot += (x.otMins || 0);
+  });
+
+  let sortedEmps = Object.values(empSummary).map(e => ({
+    ...e,
+    attPct: Math.round((e.present / e.total) * 100)
+  })).sort((a,b) => b.attPct - a.attPct);
+
+  if (searchVal) {
+    sortedEmps = sortedEmps.filter(e => 
+      e.name.toLowerCase().includes(searchVal) || 
+      e.uid.toLowerCase().includes(searchVal) ||
+      e.branch.toLowerCase().includes(searchVal)
+    );
+  }
+
+  container.innerHTML = `
+    <div class="summary-shell">
+      <div class="summary-section">
+        <div class="section-header-row">
+          <h3>Branch Performance Leaderboard</h3>
+          <span class="badge pills-info">${sortedBr.length} Branches</span>
+        </div>
+        <table class="summary-table">
+          <thead>
+            <tr>
+              <th>Branch</th>
+              <th>Stability (Att %)</th>
+              <th>Avg OT</th>
+              <th>Grade</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedBr.map(b => `
+              <tr class="clickable-row" onclick="filterByBranch('${b.name.replace(/'/g, "\\'")}')">
+                <td><strong>${b.name}</strong></td>
+                <td>
+                  <div class="progress-mini">
+                    <div class="pm-bar"><div style="width:${b.score}%"></div></div>
+                    <span>${b.score}%</span>
+                  </div>
+                </td>
+                <td class="mono">${b.avgOt}m</td>
+                <td><span class="badge ${b.score>85?'pills-success':b.score>70?'pills-warning':'pills-danger'}">${b.score>85?'A':b.score>70?'B':'C'}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </div>
-      <div class="emp-meta">${e.dept||'--'} | ${e.branch||'--'}</div>
-      <div class="att-bar-wrap"><div class="att-bar ${p<70?'low':''}" style="width:${p}%"></div></div>
-      <div class="emp-pct-row"><span>Attendance <strong style="color:var(--ink)">${p}%</strong></span><span>Avg <strong style="color:var(--ink)">${avg}h/day</strong></span></div>
-      <div class="emp-stats">
-        <div class="emp-stat"><span class="sv sv-p">${e.present}</span><span class="sl">Present</span></div>
-        <div class="emp-stat"><span class="sv sv-l">${e.late}</span><span class="sl">Late</span></div>
-        <div class="emp-stat"><span class="sv sv-h">${e.half}</span><span class="sl">Half</span></div>
-        <div class="emp-stat"><span class="sv sv-a">${e.absent}</span><span class="sl">Absent</span></div>
+
+      <div class="summary-section" style="margin-top:32px">
+        <div class="section-header-row">
+          <h3>Employee Efficiency Rankings</h3>
+          <span class="badge pills-glass">${sortedEmps.length} Employees</span>
+        </div>
+        <div class="table-wrap">
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Branch / Dept</th>
+                <th>Stability</th>
+                <th>OT (Hrs)</th>
+                <th>Late Days</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sortedEmps.slice(0, 50).map(e => `
+                <tr class="clickable-row" onclick="showEmpProfile('${e.uid}')">
+                  <td class="td-emp">
+                    <div class="emp-cell-meta">
+                      <strong>${e.name}</strong>
+                      <small>ID ${e.uid}</small>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="org-cell">
+                      <strong>${e.branch || '--'}</strong>
+                      <small>${e.dept || '--'}</small>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="progress-mini">
+                      <div class="pm-bar"><div class="att-bar ${e.attPct<70?'low':''}" style="width:${e.attPct}%"></div></div>
+                      <span>${e.attPct}%</span>
+                    </div>
+                  </td>
+                  <td class="mono">${(e.ot/60).toFixed(1)}h</td>
+                  <td><span class="badge ${e.late > 3 ? 'pills-danger' : e.late > 0 ? 'pills-warning' : 'pills-success'}">${e.late}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ${sortedEmps.length > 50 ? `<div class="table-footer-note">Showing top 50 performers. Use search to find specific employees.</div>` : ''}
+        </div>
       </div>
-    </div>`}).join('');
+      
+      <div id="summary-cards" class="summary-grid" style="display:none"></div>
+    </div>
+  `;
 }
 
 function renderSubTables(){
-  const row=(x,i,type)=>`
+  const row=(x,i,type)=>{
+    const isComp = x.earlyArrivalMins >= x.earlyMins && x.earlyMins > 0;
+    
+    // Safety check for missing properties (fixes 'undefined' issue)
+    const earlyArrival = x.earlyArrivalBy || '--';
+    const lastOut = x.lastOut || '--';
+    const earlyBy = x.earlyBy || '--';
+    
+    if (type === 'early') {
+      return `
+      <tr class="anim-fade ${isComp?'is-comp':''}" style="animation-delay: ${i*0.04}s">
+        <td class="td-emp" data-label="Employee"><strong>${x.name}</strong><small>ID ${x.uid}</small></td>
+        <td title="${x.branch} / ${x.department}" data-label="Branch/Dept">
+          <div class="org-cell"><strong>${x.branch||'--'}</strong><small>${x.department||'--'}</small></div>
+        </td>
+        <td class="mono" data-label="Date">${x.date} <span class="day-span">${x.day}</span></td>
+        <td data-label="Shift"><span class="shift-chip">${x.shiftDisplay}</span></td>
+        <td class="mono" data-label="IN">${x.firstIn}</td>
+        <td class="mono early-in-v" data-label="Arrived Early">${x.earlyArrivalBy}</td>
+        <td class="mono early-v" data-label="Left At">${x.lastOut}</td>
+        <td class="early-v" data-label="Left Early By">${x.earlyBy} ${isComp?'<span class="comp-tag">Compensated</span>':''}</td>
+      </tr>`;
+    }
+
+    return `
     <tr class="anim-fade" style="animation-delay: ${i*0.04}s">
       <td class="td-emp" data-label="Employee"><strong>${x.name}</strong><small>ID ${x.uid}</small></td>
       <td title="${x.branch}" data-label="Branch">${x.branch||'--'}</td>
@@ -859,28 +1124,42 @@ function renderSubTables(){
       ${type==='late'?`
         <td class="mono late-v" data-label="Arrived">${x.firstIn}</td>
         <td class="late-v" data-label="Late By">${x.lateBy}</td>
-      `:type==='early'?`
-        <td class="mono early-v" data-label="Left At">${x.lastOut}</td>
-        <td class="early-v" data-label="Left Early By">${x.earlyBy}</td>
       `:`
         <td data-label="Status"><span class="badge b-absent">Absent</span></td>
       `}
     </tr>`;
+  };
 
   document.getElementById('late-body').innerHTML=S.lateRecs.length?S.lateRecs.slice(0,50).map((x,i)=>row(x,i,'late')).join(''):'<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--ink3)">No late arrivals</td></tr>';
   document.getElementById('absent-body').innerHTML=S.absentRecs.length?S.absentRecs.slice(0,50).map((x,i)=>row(x,i,'absent')).join(''):'<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--ink3)">No absences</td></tr>';
-  document.getElementById('early-body').innerHTML=S.earlyRecs.length?S.earlyRecs.slice(0,50).map((x,i)=>row(x,i,'early')).join(''):'<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--ink3)">No early departures</td></tr>';
+  document.getElementById('early-body').innerHTML=S.earlyRecs.length?S.earlyRecs.slice(0,50).map((x,i)=>row(x,i,'early')).join(''):'<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--ink3)">No early departures</td></tr>';
 }
 
 function downloadExcel(){
   const data=S.filtered;
   if(!data.length)return showToast('No records to export.');
   const wb=XLSX.utils.book_new();
+
+  // 1. DASHBOARD OVERVIEW SHEET
+  const attPct = Math.round((data.filter(x => ['Present', 'Late'].includes(x.status)).length / data.length) * 100);
+  const overview = [
+    { 'Metric': 'Report Period', 'Value': `${document.getElementById('date-from').value} to ${document.getElementById('date-to').value}` },
+    { 'Metric': 'Total Selected Records', 'Value': data.length },
+    { 'Metric': 'Overall Attendance %', 'Value': attPct + '%' },
+    { 'Metric': 'Late Arrivals Count', 'Value': S.lateRecs.length },
+    { 'Metric': 'Absenteeism Count', 'Value': S.absentRecs.length },
+    { 'Metric': 'Early Departures Count', 'Value': S.earlyRecs.length },
+    { 'Metric': 'Detected Machine Failures', 'Value': S.failureDates.length }
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(overview), 'Dashboard Overview');
+
+  // 2. SUMMARY BY EMPLOYEE
   const sm={};
   data.forEach(r=>{
     if(!sm[r.uid])sm[r.uid]={'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,
-      'Total Days':0,'Present':0,'Late':0,'Half Day':0,'Absent':0,'Avg Hrs/Day':0,'Att %':'','_h':0};
+      'Total Days':0,'Present':0,'Late':0,'Half Day':0,'Absent':0,'Avg Hrs/Day':0,'Att %':'','Total OT (Mins)':0,'_h':0};
     const s=sm[r.uid];s['Total Days']++;s['_h']+=r.hoursWorked;
+    s['Total OT (Mins)'] += (r.otMins || 0);
     if(r.status==='Present')s['Present']++;
     else if(r.status==='Late'){s['Present']++;s['Late']++}
     else if(r.status==='Half Day')s['Half Day']++;
@@ -891,19 +1170,346 @@ function downloadExcel(){
     s['Att %']=Math.round(s['Present']/s['Total Days']*100)+'%';
     delete s['_h'];return s;
   });
-  const ws1=XLSX.utils.json_to_sheet(sumRows);ws1['!cols']=[9,22,16,16,11,9,9,10,9,12,8].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb,ws1,'Summary');
-  const ws2=XLSX.utils.json_to_sheet(data.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,
-    'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'First In':r.firstIn,'Last Out':r.lastOut,
-    'Hours':r.hoursWorked,'Overtime':r.overtime,'Status':r.status,'Late By':r.lateBy,'Early Out':r.earlyBy,'Punches':r.punchCount})));
-  ws2['!cols']=[9,22,16,16,12,6,16,9,9,7,10,10,9,9,8].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb,ws2,'Daily Detail');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sumRows),'Summary');
+  
+  // 3. DAILY DETAIL (Numeric)
+  const daily=data.map(r=>({
+    'Emp ID':r.uid,
+    'Name':r.name,
+    'Branch':r.branch,
+    'Department':r.department,
+    'Date':r.date,
+    'Day':r.day,
+    'Shift':r.shiftDisplay,
+    'Status':r.status,
+    'First In':r.firstIn,
+    'Last Out':r.lastOut,
+    'Hours Worked':r.hoursWorked,
+    'OT Mins': r.otMins || 0,
+    'Late Mins': r.lateMins || 0,
+    'Early Out Mins': r.earlyMins || 0,
+    'Early In Mins': r.earlyArrivalMins || 0,
+    'Punches':r.punchCount
+  }));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(daily),'Daily Detail');
+  
+  // 4. LATE REPORT
   const lr=data.filter(r=>r.lateMins>0);
-  if(lr.length){const ws3=XLSX.utils.json_to_sheet(lr.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Arrived':r.firstIn,'Late By':r.lateBy})));ws3['!cols']=[9,22,16,16,12,6,16,9,9].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws3,'Late Report')}
+  if(lr.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(lr.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Arrived':r.firstIn,'Late By':r.lateBy,'Late Mins':r.lateMins}))),'Late Report');
+  
+  // 5. ABSENT REPORT
   const ar=data.filter(r=>r.status==='Absent');
-  if(ar.length){const ws4=XLSX.utils.json_to_sheet(ar.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay})));ws4['!cols']=[9,22,16,16,12,6,16].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws4,'Absent Report')}
+  if(ar.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ar.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay}))),'Absent Report');
+  
+  // 6. EARLY DEPARTURE
   const er=data.filter(r=>r.earlyMins>0);
-  if(er.length){const ws5=XLSX.utils.json_to_sheet(er.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Left At':r.lastOut,'Left Early By':r.earlyBy})));ws5['!cols']=[9,22,16,16,12,6,16,9,12].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws5,'Early Departure')}
-  const from=document.getElementById('date-from').value,to=document.getElementById('date-to').value;
-  XLSX.writeFile(wb,`HR_Attendance_${from}_to_${to}.xlsx`);
+  if(er.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(er.map(r=>({'Emp ID':r.uid,'Name':r.name,'Branch':r.branch,'Department':r.department,'Date':r.date,'Day':r.day,'Shift':r.shiftDisplay,'Early In Mins':r.earlyArrivalMins,'Left At':r.lastOut,'Left Early By':r.earlyBy,'Early Out Mins':r.earlyMins}))),'Early Departure');
+  
+  // 7. SYSTEM AUDIT (Machine Failures)
+  if(S.failureDates && S.failureDates.length > 0) {
+    const auditRows = S.failureDates.map(f => ({
+      'Date': f.date,
+      'Branch': f.branch,
+      'Failure Intensity': f.pct + '% Absent',
+      'Reason': f.reason,
+      'Affected Count': f.affected,
+      'Action Taken': 'Records Auto-Tagged as System Error (Not Penalized)'
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(auditRows), 'System Audit');
+  }
+
+  const from=document.getElementById('date-from').value || 'start', to=document.getElementById('date-to').value || 'end';
+  XLSX.writeFile(wb,`Attendance_Analytics_Report_${from}_to_${to}.xlsx`);
+}
+
+function setDateRange(type) {
+  const to = new Date();
+  let from = new Date();
+  if (type === '7d') from.setDate(to.getDate() - 7);
+  else if (type === '30d') from.setDate(to.getDate() - 30);
+  else if (type === 'month') {
+    from.setDate(1);
+    to.setMonth(to.getMonth() + 1);
+    to.setDate(0);
+  } else if (type === 'clear') {
+    document.getElementById('date-from').value = '';
+    document.getElementById('date-to').value = '';
+    applyFilters();
+    return;
+  }
+  document.getElementById('date-from').value = from.toISOString().split('T')[0];
+  document.getElementById('date-to').value = to.toISOString().split('T')[0];
+  applyFilters();
+}
+
+function renderSparklines() {
+  const r = S.records;
+  if (!r.length) return;
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return d.toISOString().split('T')[0];
+  }).reverse();
+
+  const getPoints = (type, id) => {
+    return last7.map((d, i) => {
+      const dayRecs = r.filter(x => x.date === d);
+      if (!dayRecs.length) return { x: i, y: 50 };
+      let val = 0;
+      if (type === 'att') val = (dayRecs.filter(x => ['Present', 'Late'].includes(x.status)).length / dayRecs.length) * 100;
+      else if (type === 'late') val = (dayRecs.filter(x => x.status === 'Late').length / dayRecs.length) * 100;
+      else if (type === 'abs') val = (dayRecs.filter(x => x.status === 'Absent').length / dayRecs.length) * 100;
+      else if (id === 'days') val = 100;
+      return { x: i, y: 100 - (val || 0) };
+    });
+  };
+
+  ['att', 'late', 'abs', 'days'].forEach(id => {
+    const svg = document.getElementById('sp-' + id);
+    if (!svg) return;
+    const pts = getPoints(id, id);
+    const path = `M ${pts.map(p => `${p.x * 25},${p.y * 0.3}`).join(' L ')}`;
+    svg.innerHTML = `<path d="${path}" fill="none" stroke-width="2" />`;
+  });
+}
+
+
+
+function renderHeatmap(uid) {
+  const r = S.records.filter(x => x.uid === uid);
+  const grid = document.getElementById('heatmap-grid');
+  const today = new Date();
+  const days = Array.from({ length: 28 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - (27 - i));
+    return d.toISOString().split('T')[0];
+  });
+
+  grid.innerHTML = days.map(d => {
+    const rec = r.find(x => x.date === d);
+    const status = rec ? rec.status : 'None';
+    return `<div class="hm-box" data-status="${status}" data-date="${d}"></div>`;
+  }).join('');
+}
+
+function closeSidebar() {
+  const sidebar = document.getElementById('emp-sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if(sidebar) sidebar.classList.remove('open');
+  if(overlay) {
+    overlay.classList.remove('open');
+    setTimeout(() => overlay.style.display = 'none', 300);
+  }
+}
+
+function genSpark(f) {
+  const last14 = f.slice(-14);
+  if (!last14.length) return '';
+  const pts = last14.map((x, i) => ({ x: i * 4.5, y: ['Present', 'Late'].includes(x.status) ? 5 : 20 }));
+  const d = `M ${pts.map(p => `${p.x},${p.y}`).join(' L ')}`;
+  return `<svg class="sparkline-trend" viewBox="0 0 60 25"><path d="${d}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+}
+
+
+
+function showEmpProfile(uid) {
+  const r = S.records.filter(x => x.uid === uid);
+  const f = S.filtered.filter(x => x.uid === uid);
+  if (!r.length) return;
+  const profileRecs = f.length ? f : r;
+
+  const name = r[0].name;
+  const dept = r[0].department;
+  const branch = r[0].branch;
+  const overlay = document.getElementById('sidebar-overlay');
+  const sidebar = document.getElementById('emp-sidebar');
+  const content = document.getElementById('sidebar-content');
+
+  // Stats for Rings
+  const totalRecords = profileRecs.length;
+  const total = totalRecords || 1;
+  const presentRecs = profileRecs.filter(x => ['Present', 'Late'].includes(x.status));
+  const attPct = Math.round((presentRecs.length / total) * 100);
+  const lateRecs = profileRecs.filter(x => x.status === 'Late');
+  const latePct = Math.round((lateRecs.length / total) * 100);
+  const otHours = Math.round(profileRecs.reduce((sum, x) => sum + (x.otMins || 0), 0) / 60);
+  const avgHours = totalRecords
+    ? Math.round((profileRecs.reduce((sum, x) => sum + Number(x.hoursWorked || 0), 0) / totalRecords) * 100) / 100
+    : 0;
+  const exceptionCount = profileRecs.filter(x => ['Missed Punch', 'System Error'].includes(x.status)).length;
+  const statusOrder = ['Present','Late','Late (Comp)','Half Day','Missed Punch','Absent','Holiday','Week Off','System Error'];
+  const statusCounts = Object.fromEntries(statusOrder.map(status => [
+    status,
+    profileRecs.filter(x => x.status === status).length
+  ]));
+
+  // Shift DNA: Average Arrival/Departure
+  const validIn = presentRecs.map(x => timeToMins(x.firstIn)).filter(m => m !== null);
+  const avgIn = validIn.length ? Math.round(validIn.reduce((a, b) => a + b) / validIn.length) : null;
+  const avgInStr = minsToTime(avgIn);
+
+  // Heatmap Data (Full Range)
+  const fv = document.getElementById('date-from').value;
+  const tv = document.getElementById('date-to').value;
+  let dates = [];
+  if(fv && tv) {
+    let curr = new Date(fv);
+    const end = new Date(tv);
+    while(curr <= end) {
+      dates.push(new Date(curr).toISOString().split('T')[0]);
+      curr.setDate(curr.getDate() + 1);
+    }
+  }
+
+  const ring = (pct, lbl, color) => {
+    const circ = 2 * Math.PI * 28;
+    const offset = circ - (pct / 100) * circ;
+    return `
+      <div class="ring-card">
+        <div class="ring-svg-wrap">
+          <svg class="ring-svg">
+            <circle class="ring-bg" cx="32" cy="32" r="28" />
+            <circle class="ring-fg" cx="32" cy="32" r="28" style="stroke-dasharray: ${circ}; stroke-dashoffset: ${circ}; stroke: ${color}" />
+          </svg>
+          <span class="ring-val">${pct}%</span>
+        </div>
+        <span class="ring-lbl">${lbl}</span>
+      </div>
+    `;
+  };
+
+  const statusBdg = s => {
+    const m = { Present: 'success', Late: 'warning', Absent: 'danger', 'System Error': 'glass' };
+    return `<span class="badge pills-${m[s] || 'glass'}">${s}</span>`;
+  };
+
+  content.innerHTML = `
+    <div class="profile-hero">
+      <div class="hero-avatar" style="background:${avatarCol(name)}">${initials(name)}</div>
+      <div class="hero-info">
+        <h2>${name} ${genSpark(profileRecs)}</h2>
+        <p>ID ${uid} • ${dept} • ${branch}</p>
+      </div>
+    </div>
+
+    <div class="ring-grid">
+      ${ring(attPct, 'Stability', 'var(--teal)')}
+      ${ring(100 - latePct, 'Punctuality', 'var(--blue)')}
+      <div class="ring-card">
+        <div class="ring-svg-wrap">
+          <span style="font-size:1.4rem; font-weight:800">${otHours}h</span>
+        </div>
+        <span class="ring-lbl">Overtime</span>
+      </div>
+    </div>
+
+    <div class="dna-capsule">
+      <div class="dna-item">
+        <span class="dna-lbl">Shift DNA: Usual In</span>
+        <span class="dna-val">${avgInStr}</span>
+      </div>
+      <div class="dna-item">
+        <span class="dna-lbl">Engagement</span>
+        <span class="dna-val">${attPct > 80 ? 'High' : attPct > 50 ? 'Moderate' : 'Low'}</span>
+      </div>
+    </div>
+
+    <div class="summary-mini-grid">
+      <div class="summary-mini-card">
+        <span class="summary-mini-lbl">Records</span>
+        <strong class="summary-mini-val">${totalRecords}</strong>
+      </div>
+      <div class="summary-mini-card">
+        <span class="summary-mini-lbl">Present Days</span>
+        <strong class="summary-mini-val">${presentRecs.length}</strong>
+      </div>
+      <div class="summary-mini-card">
+        <span class="summary-mini-lbl">Avg Hours</span>
+        <strong class="summary-mini-val">${avgHours}h</strong>
+      </div>
+      <div class="summary-mini-card">
+        <span class="summary-mini-lbl">Exceptions</span>
+        <strong class="summary-mini-val">${exceptionCount}</strong>
+      </div>
+    </div>
+
+    <div class="section-head">Status Breakdown</div>
+    <div class="status-breakdown">
+      ${statusOrder.map(status => `
+        <div class="status-count-card" data-status="${status}">
+          <span class="status-count-label">${status}</span>
+          <strong class="status-count-value">${statusCounts[status]}</strong>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="section-head">Attendance History</div>
+    <div class="heatmap-wrap">
+      <div class="heatmap-grid" style="grid-template-columns: repeat(7, 1fr)">
+        ${dates.map(d => {
+          const dayRec = profileRecs.find(x => x.date === d);
+          const status = dayRec ? dayRec.status : 'None';
+          return `<div class="hm-box" data-status="${status}" title="${d}: ${status}"></div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="legend-row">
+      <div class="leg-item"><div class="leg-dot" style="background:var(--teal)"></div> Present</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div> Late</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div> Absent</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--slate)"></div> Off</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--violet)"></div> Holiday</div>
+    </div>
+
+    <div class="section-head">Recent activity</div>
+    <div class="timeline-wrap">
+      ${profileRecs.slice().reverse().slice(0, 10).map(x => {
+        let ico = '';
+        if(x.status==='Late') ico='<span class="glow-ico glow-warn">⏰</span>';
+        if(x.status==='System Error') ico='<span class="glow-ico glow-sys">⚙️</span>';
+        if(x.status==='Missed Punch') ico='<span class="glow-ico glow-err">⚠️</span>';
+        return `
+        <div class="tl-item">
+          <div class="tl-date">
+            <span>${x.date.split('-').slice(1).reverse().join('/')}</span>
+            <small style="display:block; font-size:0.6rem; color:var(--ink-faint)">${x.day}</small>
+          </div>
+          <div class="tl-shift">
+            <span style="display:block">${x.firstIn || '--'} → ${x.lastOut || '--'}</span>
+            <small>${x.shiftDisplay}</small>
+          </div>
+          <div class="tl-res">
+             ${ico}
+             ${statusBdg(x.status)}
+          </div>
+        </div>
+      `}).join('')}
+    </div>
+  `;
+
+  overlay.style.display = 'block';
+  setTimeout(() => {
+    overlay.classList.add('open');
+    sidebar.classList.add('open');
+    // Animate rings
+    content.querySelectorAll('.ring-fg').forEach(r => {
+      const circ = parseFloat(r.style.strokeDasharray);
+      const offset = circ - (parseFloat(r.parentElement.nextElementSibling.textContent) / 100) * circ;
+      // Wait for slide-in to finish then animate ring
+      setTimeout(() => r.style.strokeDashoffset = isNaN(offset) ? circ : offset, 600);
+    });
+  }, 10);
+}
+
+function filterByBranch(branch) {
+  const menu = document.getElementById('f-branch');
+  if(!menu) return;
+  const checkboxes = menu.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(cb => cb.checked = (cb.value === branch));
+  
+  // Switch back to Daily tab
+  switchTab('daily', document.querySelector('.tab[onclick*="daily"]'));
+  applyFilters();
+  showToast(`Filtering by Branch: ${branch}`);
 }
