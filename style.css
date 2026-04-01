@@ -2738,6 +2738,49 @@ thead th {
     padding: 9px 10px 9px 34px;
   }
 
+  #tab-daily .sticky-header-daily .panel-head {
+    padding: 10px 10px 6px !important;
+  }
+
+  #tab-daily .daily-header-flex {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  #tab-daily #daily-title {
+    font-size: 0.98rem !important;
+    line-height: 1.2;
+  }
+
+  #tab-daily .daily-tools {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  #tab-daily .shortcut-grp {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  #tab-daily .btn-s {
+    padding: 8px 0;
+    font-size: 0.62rem;
+  }
+
+  #tab-daily .search-mini {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+  }
+
+  #tab-daily .search-mini input {
+    min-height: 40px;
+  }
+
   .filter-bar {
     display: grid;
     grid-template-columns: 1fr 1fr;
