@@ -5,6 +5,8 @@ const S = {
   page: 1, perPage: 100,
   lateRecs: [], absentRecs: [], earlyRecs: [],
   quickFilter: '',
+  mobileFiltersOpen: false,
+  activeProfile: { uid: '', filter: 'all' },
   holidays: [
     { name: "Makarsankranti", d: "2026-01-14", b: ["Gujarat"] },
     { name: "Republic Day", d: "2026-01-26", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
@@ -48,6 +50,79 @@ const STORAGE_KEYS = {
   records: 'hr_att_v3',
   ui: 'hr_att_ui_v1'
 };
+const MOBILE_FILTER_BREAKPOINT = 720;
+const layoutObservers = [];
+
+function isMobileFilterViewport() {
+  return window.matchMedia(`(max-width: ${MOBILE_FILTER_BREAKPOINT}px)`).matches;
+}
+
+function getRecordDateBounds() {
+  const dates = S.records.map(r => r.date).filter(Boolean).sort();
+  return {
+    min: dates[0] || '',
+    max: dates[dates.length - 1] || ''
+  };
+}
+
+function countActiveFilters() {
+  let active = 0;
+  const searchValue = document.getElementById('search')?.value.trim();
+  const { min, max } = getRecordDateBounds();
+  const from = document.getElementById('date-from')?.value || '';
+  const to = document.getElementById('date-to')?.value || '';
+
+  if (searchValue) active++;
+  if (getSelectedValues('f-branch').length) active++;
+  if (getSelectedValues('f-dept').length) active++;
+  if (getSelectedValues('f-status').length || S.quickFilter === 'Late') active++;
+  if (getSelectedValues('f-emp').length) active++;
+  if ((from && from !== min) || (to && to !== max)) active++;
+
+  return active;
+}
+
+function refreshMobileFilterUi() {
+  const shell = document.getElementById('daily-filter-shell');
+  const toggle = document.getElementById('mobile-filter-toggle');
+  const summary = document.getElementById('mobile-filter-summary');
+  const state = document.getElementById('mobile-filter-state');
+
+  if (!shell || !toggle || !summary || !state) return;
+
+  const mobile = isMobileFilterViewport();
+  const open = !mobile || S.mobileFiltersOpen;
+  const activeCount = countActiveFilters();
+
+  shell.classList.toggle('collapsed', mobile && !open);
+  toggle.setAttribute('aria-expanded', String(open));
+  summary.textContent = activeCount ? `${activeCount} active` : 'No filters';
+  state.textContent = open ? 'Hide' : 'Show';
+
+  if (!open) {
+    document.querySelectorAll('.mfilter.open').forEach(el => el.classList.remove('open'));
+  }
+}
+
+function toggleMobileFilters(forceOpen) {
+  S.mobileFiltersOpen = typeof forceOpen === 'boolean' ? forceOpen : !S.mobileFiltersOpen;
+  refreshMobileFilterUi();
+  queueStickyLayoutSync();
+}
+
+function syncResponsiveUi() {
+  refreshMobileFilterUi();
+  queueStickyLayoutSync();
+}
+
+function updateDailyTitle() {
+  const title = document.getElementById('daily-title');
+  if (!title) return;
+
+  const count = S.filtered.length;
+  const suffix = count === S.records.length ? '' : ' filtered';
+  title.innerHTML = `Daily Attendance Records (<span id="tb-daily-title-count">${count}</span>${suffix})`;
+}
 
 function syncStickyLayout() {
   const root = document.documentElement;
@@ -119,16 +194,31 @@ function initApp() {
   const savedTheme = localStorage.getItem('theme') || 'obsidian';
   applyTheme(savedTheme);
 
+  const topbar = document.querySelector('.topbar');
   const stickyHeader = document.querySelector('.sticky-header-daily');
-  if (stickyHeader) {
-    new ResizeObserver(() => syncStickyLayout()).observe(stickyHeader);
+  if ('ResizeObserver' in window) {
+    [topbar, stickyHeader].filter(Boolean).forEach(target => {
+      const observer = new ResizeObserver(() => queueStickyLayoutSync());
+      observer.observe(target);
+      layoutObservers.push(observer);
+    });
+  }
+
+  document.querySelector('.logo-img')?.addEventListener('load', queueStickyLayoutSync, { once: true });
+  window.addEventListener('load', syncResponsiveUi, { once: true });
+  window.addEventListener('orientationchange', syncResponsiveUi);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncResponsiveUi);
+  }
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(syncResponsiveUi).catch(() => { });
   }
 
   restoreSavedSession();
-  queueStickyLayoutSync();
+  syncResponsiveUi();
 }
 
-window.addEventListener('resize', queueStickyLayoutSync);
+window.addEventListener('resize', syncResponsiveUi);
 initApp();
 
 function toggleTheme() {
@@ -147,7 +237,7 @@ function applyTheme(themeId) {
   document.getElementById('theme-btn-label').textContent = theme.label;
   localStorage.setItem('theme', theme.id);
   syncAppMode();
-  queueStickyLayoutSync();
+  syncResponsiveUi();
 }
 
 function getActiveTabName() {
@@ -184,7 +274,8 @@ function persistUiState() {
     dateFrom: document.getElementById('date-from')?.value || '',
     dateTo: document.getElementById('date-to')?.value || '',
     activeTab: getActiveTabName(),
-    quickFilter: S.quickFilter || ''
+    quickFilter: S.quickFilter || '',
+    mobileFiltersOpen: !!S.mobileFiltersOpen
   };
 
   localStorage.setItem(STORAGE_KEYS.ui, JSON.stringify(state));
@@ -200,6 +291,7 @@ function restoreUiState() {
     const dateFrom = document.getElementById('date-from');
     const dateTo = document.getElementById('date-to');
     S.quickFilter = state.quickFilter || '';
+    S.mobileFiltersOpen = !!state.mobileFiltersOpen;
 
     if (search) search.value = state.search || '';
     if (dateFrom && state.dateFrom) dateFrom.value = state.dateFrom;
@@ -217,6 +309,7 @@ function restoreUiState() {
       : 'daily';
     const tabBtn = getTabButton(targetTab);
     if (tabBtn) switchTab(targetTab, tabBtn);
+    refreshMobileFilterUi();
   } catch (err) {
     console.error('Failed to restore UI state.', err);
     localStorage.removeItem(STORAGE_KEYS.ui);
@@ -620,19 +713,18 @@ function buildReport() {
   document.getElementById('tabs-row').style.display = 'flex';
   document.getElementById('tab-daily').style.display = 'block';
   const dBadge = document.getElementById('tb-daily-badge');
-  const dTitleCount = document.getElementById('tb-daily-title-count');
   if (dBadge) dBadge.textContent = S.records.length;
-  if (dTitleCount) dTitleCount.textContent = S.records.length;
   document.getElementById('tb-summary').textContent = [...new Set(S.records.map(r => r.uid))].size;
   document.getElementById('tb-late').textContent = S.lateRecs.length;
   document.getElementById('tb-absent').textContent = S.absentRecs.length;
   document.getElementById('tb-early').textContent = S.earlyRecs.length;
   S.filtered = [...S.records]; S.page = 1;
+  updateDailyTitle();
   renderStats(S.records); renderTable(); renderSubTables(); renderInsights();
   persistRecords();
   persistUiState();
   syncAppMode();
-  queueStickyLayoutSync();
+  syncResponsiveUi();
 }
 
 function detectMachineFailures() {
@@ -756,7 +848,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'summary') renderSummary();
   persistUiState();
-  queueStickyLayoutSync();
+  syncResponsiveUi();
 }
 
 function syncAppMode() {
@@ -827,9 +919,7 @@ function applyFilters() {
   S.earlyRecs = S.filtered.filter(r => r.earlyMins > 0);
 
   const dBadge = document.getElementById('tb-daily-badge');
-  const dTitleCount = document.getElementById('tb-daily-title-count');
   if (dBadge) dBadge.textContent = S.filtered.length;
-  if (dTitleCount) dTitleCount.textContent = S.filtered.length;
   document.getElementById('tb-summary').textContent = [...new Set(S.filtered.map(r => r.uid))].size;
   document.getElementById('tb-late').textContent = S.lateRecs.length;
   document.getElementById('tb-absent').textContent = S.absentRecs.length;
@@ -837,11 +927,10 @@ function applyFilters() {
 
   S.page = 1; renderStats(S.filtered); renderTable();
   renderSubTables(); renderSummary();
-
-  document.getElementById('daily-title').textContent =
-    S.filtered.length === S.records.length ? 'Daily Attendance Records' : `Daily Attendance Records (${S.filtered.length} filtered)`;
+  updateDailyTitle();
   persistUiState();
   syncAppMode();
+  refreshMobileFilterUi();
 }
 
 function sortBy(col) {
@@ -944,7 +1033,8 @@ function initials(n) { return n.split(' ').map(w => w[0]).join('').slice(0, 2).t
 function renderSummary() {
   const r = S.filtered;
   const container = document.getElementById('tab-summary');
-  const searchVal = (document.getElementById('search-summary')?.value || '').toLowerCase();
+  const summarySearchValue = document.getElementById('search-summary')?.value || '';
+  const searchVal = summarySearchValue.toLowerCase();
 
   if (!r.length) {
     container.innerHTML = '<div class="empty-state">No data for summary</div>';
@@ -998,50 +1088,64 @@ function renderSummary() {
     sortedEmps = sortedEmps.filter(e =>
       e.name.toLowerCase().includes(searchVal) ||
       e.uid.toLowerCase().includes(searchVal) ||
-      e.branch.toLowerCase().includes(searchVal)
+      (e.branch || '').toLowerCase().includes(searchVal) ||
+      (e.dept || '').toLowerCase().includes(searchVal)
     );
   }
 
   container.innerHTML = `
     <div class="summary-shell">
+      <div class="panel-head summary-panel-head">
+        <h2>Employee Summary</h2>
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6"></circle>
+            <path d="m20 20-4.35-4.35"></path>
+          </svg>
+          <input id="search-summary" class="search-inp" type="search" placeholder="Search summary cards"
+            oninput="renderSummary()">
+        </div>
+      </div>
       <div class="summary-section">
         <div class="section-header-row">
           <h3>Branch Performance Leaderboard</h3>
           <span class="badge pills-info">${sortedBr.length} Branches</span>
         </div>
-        <table class="summary-table">
-          <thead>
-            <tr>
-              <th>Branch</th>
-              <th>Stability (Att %)</th>
-              <th>Avg OT</th>
-              <th>Grade</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${sortedBr.map(b => `
-              <tr class="clickable-row" onclick="filterByBranch('${b.name.replace(/'/g, "\\'")}')">
-                <td><strong>${b.name}</strong></td>
-                <td>
-                  <div class="progress-mini">
-                    <div class="pm-bar"><div style="width:${b.score}%"></div></div>
-                    <span>${b.score}%</span>
-                  </div>
-                </td>
-                <td class="mono">${b.avgOt}m</td>
-                <td><span class="badge ${b.score > 85 ? 'pills-success' : b.score > 70 ? 'pills-warning' : 'pills-danger'}">${b.score > 85 ? 'A' : b.score > 70 ? 'B' : 'C'}</span></td>
+        <div class="summary-table-wrap">
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>Branch</th>
+                <th>Stability (Att %)</th>
+                <th>Avg OT</th>
+                <th>Grade</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${sortedBr.map(b => `
+                <tr class="clickable-row" onclick="filterByBranch('${b.name.replace(/'/g, "\\'")}')">
+                  <td class="summary-main" data-label="Branch"><strong>${b.name}</strong></td>
+                  <td class="summary-progress" data-label="Stability">
+                    <div class="progress-mini">
+                      <div class="pm-bar"><div style="width:${b.score}%"></div></div>
+                      <span>${b.score}%</span>
+                    </div>
+                  </td>
+                  <td class="mono" data-label="Avg OT">${b.avgOt}m</td>
+                  <td data-label="Grade"><span class="badge ${b.score > 85 ? 'pills-success' : b.score > 70 ? 'pills-warning' : 'pills-danger'}">${b.score > 85 ? 'A' : b.score > 70 ? 'B' : 'C'}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div class="summary-section" style="margin-top:32px">
+      <div class="summary-section summary-section-spaced">
         <div class="section-header-row">
           <h3>Employee Efficiency Rankings</h3>
           <span class="badge pills-glass">${sortedEmps.length} Employees</span>
         </div>
-        <div class="table-wrap">
+        <div class="summary-table-wrap">
           <table class="summary-table">
             <thead>
               <tr>
@@ -1055,26 +1159,26 @@ function renderSummary() {
             <tbody>
               ${sortedEmps.slice(0, 50).map(e => `
                 <tr class="clickable-row" onclick="showEmpProfile('${e.uid}')">
-                  <td class="td-emp">
+                  <td class="td-emp summary-main" data-label="Employee">
                     <div class="emp-cell-meta">
                       <strong>${e.name}</strong>
                       <small>ID ${e.uid}</small>
                     </div>
                   </td>
-                  <td>
+                  <td class="summary-org" data-label="Branch / Dept">
                     <div class="org-cell">
                       <strong>${e.branch || '--'}</strong>
                       <small>${e.dept || '--'}</small>
                     </div>
                   </td>
-                  <td>
+                  <td class="summary-progress" data-label="Stability">
                     <div class="progress-mini">
                       <div class="pm-bar"><div class="att-bar ${e.attPct < 70 ? 'low' : ''}" style="width:${e.attPct}%"></div></div>
                       <span>${e.attPct}%</span>
                     </div>
                   </td>
-                  <td class="mono">${(e.ot / 60).toFixed(1)}h</td>
-                  <td><span class="badge ${e.late > 3 ? 'pills-danger' : e.late > 0 ? 'pills-warning' : 'pills-success'}">${e.late}</span></td>
+                  <td class="mono" data-label="OT (Hrs)">${(e.ot / 60).toFixed(1)}h</td>
+                  <td data-label="Late Days"><span class="badge ${e.late > 3 ? 'pills-danger' : e.late > 0 ? 'pills-warning' : 'pills-success'}">${e.late}</span></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1086,6 +1190,8 @@ function renderSummary() {
       <div id="summary-cards" class="summary-grid" style="display:none"></div>
     </div>
   `;
+  const summarySearch = document.getElementById('search-summary');
+  if (summarySearch) summarySearch.value = summarySearchValue;
 }
 
 function renderSubTables() {
@@ -1294,9 +1400,90 @@ function renderHeatmap(uid) {
   }).join('');
 }
 
+function getProfileFilterMeta(filter) {
+  if (!filter || filter === 'all') {
+    return { key: 'all', label: 'All activity', match: () => true };
+  }
+
+  if (filter === 'attended') {
+    return {
+      key: filter,
+      label: 'Present Days',
+      match: rec => ['Present', 'Late', 'Late (Comp)'].includes(rec.status)
+    };
+  }
+
+  if (filter === 'exceptions') {
+    return {
+      key: filter,
+      label: 'Exceptions',
+      match: rec => ['Missed Punch', 'System Error'].includes(rec.status)
+    };
+  }
+
+  if (filter.startsWith('status:')) {
+    const status = filter.slice(7);
+    return {
+      key: filter,
+      label: status,
+      match: rec => rec.status === status
+    };
+  }
+
+  return { key: 'all', label: 'All activity', match: () => true };
+}
+
+function isProfileFilterActive(filter) {
+  return (S.activeProfile?.filter || 'all') === filter;
+}
+
+function setProfileFilter(filter) {
+  const uid = S.activeProfile?.uid;
+  if (!uid) return;
+  showEmpProfile(uid, filter, true);
+}
+
+function formatHeatmapRange(start, end) {
+  const startDate = new Date(start + 'T12:00:00');
+  const endDate = new Date(end + 'T12:00:00');
+  const startLabel = startDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  const endLabel = endDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return start === end ? startLabel : `${startLabel} - ${endLabel}`;
+}
+
+function animateProfileRings(scope, delay = 0) {
+  scope.querySelectorAll('.ring-fg').forEach(r => {
+    const circ = parseFloat(r.style.strokeDasharray);
+    const val = parseFloat(r.parentElement?.nextElementSibling?.textContent);
+    const offset = circ - ((isNaN(val) ? 0 : val) / 100) * circ;
+    setTimeout(() => {
+      r.style.strokeDashoffset = isNaN(offset) ? circ : offset;
+    }, delay);
+  });
+}
+
+function selectHeatmapDay(el) {
+  if (!el) return;
+  const wrap = el.closest('.heatmap-wrap');
+  const detail = document.getElementById('heatmap-detail');
+  if (!wrap || !detail) return;
+
+  wrap.querySelectorAll('.hm-box.active').forEach(box => box.classList.remove('active'));
+  el.classList.add('active');
+
+  const date = el.dataset.date || '--';
+  const day = el.dataset.day || '--';
+  const status = el.dataset.status || 'None';
+  detail.innerHTML = `
+    <div class="heatmap-detail-date">${date} <span>${day}</span></div>
+    <div class="heatmap-detail-status">${status}</div>
+  `;
+}
+
 function closeSidebar() {
   const sidebar = document.getElementById('emp-sidebar');
   const overlay = document.getElementById('sidebar-overlay');
+  S.activeProfile = { uid: '', filter: 'all' };
   if (sidebar) sidebar.classList.remove('open');
   if (overlay) {
     overlay.classList.remove('open');
@@ -1314,7 +1501,7 @@ function genSpark(f) {
 
 
 
-function showEmpProfile(uid) {
+function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
   const r = S.records.filter(x => x.uid === uid);
   const f = S.filtered.filter(x => x.uid === uid);
   if (!r.length) return;
@@ -1326,6 +1513,12 @@ function showEmpProfile(uid) {
   const overlay = document.getElementById('sidebar-overlay');
   const sidebar = document.getElementById('emp-sidebar');
   const content = document.getElementById('sidebar-content');
+  const sidebarBody = sidebar?.querySelector('.sidebar-body');
+  const wasOpen = sidebar?.classList.contains('open');
+  const savedScroll = preserveScroll && sidebarBody ? sidebarBody.scrollTop : 0;
+  const filterMeta = getProfileFilterMeta(filter);
+  const filteredProfileRecs = profileRecs.filter(filterMeta.match);
+  S.activeProfile = { uid, filter: filterMeta.key };
 
   // Stats for Rings
   const totalRecords = profileRecs.length;
@@ -1363,13 +1556,25 @@ function showEmpProfile(uid) {
     }
   }
 
-  const ring = (pct, lbl, color) => {
+  const heroMeta = [`ID ${uid}`, dept, branch].filter(Boolean);
+  const weekRows = [];
+  for (let i = 0; i < dates.length; i += 7) weekRows.push(dates.slice(i, i + 7));
+  const defaultHeatmapDate = filteredProfileRecs.length
+    ? [...dates].reverse().find(d => filteredProfileRecs.some(x => x.date === d)) || ''
+    : '';
+  const defaultHeatmapRec = defaultHeatmapDate ? profileRecs.find(x => x.date === defaultHeatmapDate) : null;
+  const defaultHeatmapDay = defaultHeatmapDate
+    ? (defaultHeatmapRec?.day || new Date(defaultHeatmapDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }))
+    : '';
+  const defaultHeatmapStatus = defaultHeatmapRec ? defaultHeatmapRec.status : (defaultHeatmapDate ? 'None' : '');
+  const recentActivity = filteredProfileRecs.slice().reverse().slice(0, 10);
+
+  const ring = (pct, lbl, color, extraClass = '') => {
     const circ = 2 * Math.PI * 28;
-    const offset = circ - (pct / 100) * circ;
     return `
-      <div class="ring-card">
+      <div class="ring-card ${extraClass}">
         <div class="ring-svg-wrap">
-          <svg class="ring-svg">
+          <svg class="ring-svg" viewBox="0 0 64 64" aria-hidden="true">
             <circle class="ring-bg" cx="32" cy="32" r="28" />
             <circle class="ring-fg" cx="32" cy="32" r="28" style="stroke-dasharray: ${circ}; stroke-dashoffset: ${circ}; stroke: ${color}" />
           </svg>
@@ -1389,7 +1594,13 @@ function showEmpProfile(uid) {
     <div class="profile-hero">
       <div class="hero-avatar" style="background:${avatarCol(name)}">${initials(name)}</div>
       <div class="hero-info">
-        <h2>${name} ${genSpark(profileRecs)}</h2>
+        <h2>
+          <span>${name}</span>
+          ${genSpark(profileRecs)}
+        </h2>
+        <p class="hero-meta">
+          ${heroMeta.map(part => `<span>${part}</span>`).join('<span class="hero-meta-sep">&bull;</span>')}
+        </p>
         <p>ID ${uid} • ${dept} • ${branch}</p>
       </div>
     </div>
@@ -1397,9 +1608,9 @@ function showEmpProfile(uid) {
     <div class="ring-grid">
       ${ring(attPct, 'Stability', 'var(--teal)')}
       ${ring(100 - latePct, 'Punctuality', 'var(--blue)')}
-      <div class="ring-card">
+      <div class="ring-card ring-card-wide">
         <div class="ring-svg-wrap">
-          <span style="font-size:1.4rem; font-weight:800">${otHours}h</span>
+          <span class="ring-stat-value">${otHours}h</span>
         </div>
         <span class="ring-lbl">Overtime</span>
       </div>
@@ -1417,42 +1628,62 @@ function showEmpProfile(uid) {
     </div>
 
     <div class="summary-mini-grid">
-      <div class="summary-mini-card">
+      <button class="summary-mini-card profile-action-card${filterMeta.key === 'all' ? ' active' : ''}" type="button" onclick="setProfileFilter('all')">
         <span class="summary-mini-lbl">Records</span>
         <strong class="summary-mini-val">${totalRecords}</strong>
-      </div>
-      <div class="summary-mini-card">
+      </button>
+      <button class="summary-mini-card profile-action-card${filterMeta.key === 'attended' ? ' active' : ''}" type="button" onclick="setProfileFilter('attended')">
         <span class="summary-mini-lbl">Present Days</span>
         <strong class="summary-mini-val">${presentRecs.length}</strong>
-      </div>
+      </button>
       <div class="summary-mini-card">
         <span class="summary-mini-lbl">Avg Hours</span>
         <strong class="summary-mini-val">${avgHours}h</strong>
       </div>
-      <div class="summary-mini-card">
+      <button class="summary-mini-card profile-action-card${filterMeta.key === 'exceptions' ? ' active' : ''}" type="button" onclick="setProfileFilter('exceptions')">
         <span class="summary-mini-lbl">Exceptions</span>
         <strong class="summary-mini-val">${exceptionCount}</strong>
-      </div>
+      </button>
     </div>
 
     <div class="section-head">Status Breakdown</div>
     <div class="status-breakdown">
       ${statusOrder.map(status => `
-        <div class="status-count-card" data-status="${status}">
+        <button class="status-count-card profile-action-card${filterMeta.key === `status:${status}` ? ' active' : ''}" type="button" data-status="${status}" onclick="setProfileFilter('status:${status.replace(/'/g, "\\'")}')">
           <span class="status-count-label">${status}</span>
           <strong class="status-count-value">${statusCounts[status]}</strong>
-        </div>
+        </button>
       `).join('')}
+    </div>
+
+    <div class="profile-section-tools">
+      <span class="profile-filter-note">${filterMeta.key === 'all' ? 'Tap the cards above to focus the history and recent activity.' : `Showing ${filterMeta.label}`}</span>
+      ${filterMeta.key === 'all' ? '' : '<button class="profile-filter-clear" type="button" onclick="setProfileFilter(\'all\')">Show all</button>'}
     </div>
 
     <div class="section-head">Attendance History</div>
     <div class="heatmap-wrap">
-      <div class="heatmap-grid" style="grid-template-columns: repeat(7, 1fr)">
-        ${dates.map(d => {
+      <div class="heatmap-week-list">
+        ${weekRows.map(week => `
+          <div class="heatmap-week-row">
+            <div class="heatmap-week-label">${formatHeatmapRange(week[0], week[week.length - 1])}</div>
+            <div class="heatmap-grid heatmap-row-grid" style="grid-template-columns: repeat(${week.length}, 1fr)">
+              ${week.map(d => {
     const dayRec = profileRecs.find(x => x.date === d);
     const status = dayRec ? dayRec.status : 'None';
-    return `<div class="hm-box" data-status="${status}" title="${d}: ${status}"></div>`;
+    const day = dayRec?.day || new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+    const isActive = d === defaultHeatmapDate ? ' active' : '';
+    const isMuted = filterMeta.key !== 'all' && (!dayRec || !filterMeta.match(dayRec)) ? ' is-muted' : '';
+    return `<div class="hm-box${isActive}${isMuted}" data-status="${status}" data-date="${d}" data-day="${day}" title="${d}: ${status}" role="button" tabindex="0" onclick="selectHeatmapDay(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHeatmapDay(this)}"></div>`;
   }).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div id="heatmap-detail" class="heatmap-detail">
+        ${defaultHeatmapDate
+      ? `<div class="heatmap-detail-date">${defaultHeatmapDate} <span>${defaultHeatmapDay}</span></div><div class="heatmap-detail-status">${defaultHeatmapStatus}</div>`
+      : `<div class="heatmap-detail-date">No ${filterMeta.label.toLowerCase()} in this range</div><div class="heatmap-detail-status">Try another card</div>`}
       </div>
     </div>
 
@@ -1466,12 +1697,12 @@ function showEmpProfile(uid) {
 
     <div class="section-head">Recent activity</div>
     <div class="timeline-wrap">
-      ${profileRecs.slice().reverse().slice(0, 10).map(x => {
-    let ico = '';
-    if (x.status === 'Late') ico = '<span class="glow-ico glow-warn">⏰</span>';
-    if (x.status === 'System Error') ico = '<span class="glow-ico glow-sys">⚙️</span>';
-    if (x.status === 'Missed Punch') ico = '<span class="glow-ico glow-err">⚠️</span>';
-    return `
+      ${recentActivity.length ? recentActivity.map(x => {
+        let ico = '';
+        if (x.status === 'Late') ico = '<span class="glow-ico glow-warn">⏰</span>';
+        if (x.status === 'System Error') ico = '<span class="glow-ico glow-sys">⚙️</span>';
+        if (x.status === 'Missed Punch') ico = '<span class="glow-ico glow-err">⚠️</span>';
+        return `
         <div class="tl-item">
           <div class="tl-date">
             <span>${x.date.split('-').slice(1).reverse().join('/')}</span>
@@ -1486,21 +1717,24 @@ function showEmpProfile(uid) {
              ${statusBdg(x.status)}
           </div>
         </div>
-      `}).join('')}
+      `}).join('') : `<div class="profile-empty-state">No ${filterMeta.label.toLowerCase()} found in the selected range.</div>`}
     </div>
   `;
 
+  if (sidebarBody) sidebarBody.scrollTop = preserveScroll ? savedScroll : 0;
+
   overlay.style.display = 'block';
+  if (wasOpen) {
+    overlay.classList.add('open');
+    sidebar.classList.add('open');
+    animateProfileRings(content, 60);
+    return;
+  }
+
   setTimeout(() => {
     overlay.classList.add('open');
     sidebar.classList.add('open');
-    // Animate rings
-    content.querySelectorAll('.ring-fg').forEach(r => {
-      const circ = parseFloat(r.style.strokeDasharray);
-      const offset = circ - (parseFloat(r.parentElement.nextElementSibling.textContent) / 100) * circ;
-      // Wait for slide-in to finish then animate ring
-      setTimeout(() => r.style.strokeDashoffset = isNaN(offset) ? circ : offset, 600);
-    });
+    animateProfileRings(content, 600);
   }, 10);
 }
 
