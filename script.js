@@ -16,11 +16,10 @@ window.S = {
     { name: "Independence Day", d: "2026-08-15", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
     { name: "Rakshabandhan", d: "2026-08-28", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
     { name: "Gokulashtami", d: "2026-09-04", b: ["Mumbai", "Borivali", "Nagpur"] },
-    { name: "Ganesh Chaturthi", d: "2026-09-14", d2: "2026-09-15", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
+    { name: "Ganesh Chaturthi", d: "2026-09-14", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
     { name: "Anant Chaturthi", d: "2026-09-25", b: ["Mumbai", "Borivali", "Nagpur"] },
     { name: "Gandhi Jayanti", d: "2026-10-02", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
     { name: "Dussehra", d: "2026-10-20", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Jinharsh Diwali Celebration", d: "2026-11-07", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
     { name: "Narak Chaturdashi/Laxmi Pujan", d: "2026-11-08", b: ["Mumbai", "Borivali", "Gujarat"] },
     { name: "Diwali", d: "2026-11-09", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
     { name: "Gujarati New Year / Padwa", d: "2026-11-10", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
@@ -377,6 +376,12 @@ function restoreSavedSession() {
 
     if (!records.length) return;
 
+    records.forEach(r => {
+      if (r.branch) {
+        r.branch = r.branch.replace(/\s*-\s*/g, ' - ').replace(/\s+/g, ' ').trim();
+      }
+    });
+
     S.records = records;
     buildReport();
     renderSparklines();
@@ -574,7 +579,7 @@ async function parseShift(file) {
           if (!uid && !row[nmC]) continue;
           if (uid) map[String(uid).trim()] = {
             name: row[nmC] ? String(row[nmC]).trim() : 'User ' + uid,
-            branch: row[brC] ? String(row[brC]).trim() : '',
+            branch: row[brC] ? String(row[brC]).replace(/\s*-\s*/g, ' - ').replace(/\s+/g, ' ').trim() : '',
             department: row[dpC] ? String(row[dpC]).trim() : '',
             shiftStart: toMins(row[stC]), shiftEnd: toMins(row[enC])
           };
@@ -690,7 +695,7 @@ async function generateReport() {
           if (hrs < 0.25 || ps.length === 1) status = 'Missed Punch';
 
           if (status !== 'Missed Punch') {
-            otMins = getOvertimeMinutes(sSt, sEn, workedMins);
+            otMins = hasShift ? getOvertimeMinutes(sSt, sEn, workedMins) : 0;
           }
         }
 

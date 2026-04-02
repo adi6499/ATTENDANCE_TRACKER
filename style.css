@@ -149,7 +149,7 @@
 /* ─── BASE ─── */
 html {
   scroll-behavior: smooth;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -160,7 +160,7 @@ body {
   color: var(--ink);
   background: var(--bg);
   padding: 0 8px 16px;
-  overflow-x: hidden;
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -1085,7 +1085,7 @@ body[data-mode="start"] {
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: var(--sticky-panel-top);
-  z-index: 12;
+  z-index: 80;
 }
 
 .date-grp {
@@ -1157,7 +1157,7 @@ body[data-mode="start"] {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  z-index: 30;
+  z-index: 100;
 }
 
 .mfilter.open .mfilter-panel {
@@ -3618,49 +3618,52 @@ thead th {
   }
 
   /* PREMIUM CARD-GRID TABLE TRANSFORMATION */
-  #tab-daily .daily-table thead,
-  #tab-daily .daily-table-headcopy {
+  table:not(.summary-table) thead,
+  .daily-table-headcopy {
     display: none !important;
   }
 
-  #tab-daily .daily-table,
-  #tab-daily .daily-table tbody {
+  table:not(.summary-table),
+  table:not(.summary-table) tbody {
     display: block !important;
     width: 100% !important;
   }
 
-  #tab-daily .daily-table tr {
+  table:not(.summary-table) tr:not(.exp-row) {
     display: grid !important;
     grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-    margin-bottom: 24px;
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    box-shadow: none !important;
+    gap: 12px 8px;
+    margin-bottom: 16px;
+    background: var(--surface) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+    box-shadow: var(--shadow-sm) !important;
+    cursor: default;
   }
 
-  #tab-daily .daily-table tr:not(.exp-row) {
-    cursor: default !important;
+  table:not(.summary-table) tr:not(.exp-row):hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md) !important;
+    border-color: var(--blue) !important;
   }
 
-  #tab-daily .daily-table td {
+  table:not(.summary-table) td {
     display: flex !important;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    text-align: center !important;
-    padding: 12px 10px !important;
-    background: var(--surface);
-    border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    position: relative;
+    text-align: left !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    min-height: auto;
     font-size: 0.85rem;
-    min-height: 64px;
-    box-shadow: var(--shadow-sm);
   }
 
-  #tab-daily .daily-table td:before {
+  table:not(.summary-table) td:before {
     content: attr(data-label);
     display: block;
     margin-bottom: 4px;
@@ -3672,78 +3675,60 @@ thead th {
   }
 
   /* Main Header Card (Employee) */
-  #tab-daily .daily-table td.td-emp {
+  table:not(.summary-table) td.td-emp {
     grid-column: 1 / -1 !important;
-    align-items: flex-start;
-    text-align: left !important;
-    background: var(--surface-soft);
-    border: 1px solid var(--teal-soft) !important;
-    border-radius: 16px !important;
-    padding: 14px 16px !important;
+    padding-bottom: 12px !important;
     margin-bottom: 4px;
+    border-bottom: 1px solid var(--border) !important;
   }
 
-  #tab-daily .daily-table td.td-emp:before {
+  table:not(.summary-table) td.td-emp:before {
     display: none;
   }
 
-  #tab-daily .daily-table td.td-emp strong {
-    display: block;
+  table:not(.summary-table) td.td-emp strong {
     font-size: 1.05rem;
-    color: var(--teal);
+    color: var(--ink);
     letter-spacing: -0.01em;
   }
 
-  #tab-daily .daily-table td.td-emp small {
-    display: inline-block;
-    background: var(--teal-soft);
-    color: var(--teal);
-    padding: 2px 8px;
-    border-radius: 6px;
-    margin-top: 6px;
-    font-weight: 700;
-    font-size: 0.65rem;
-    letter-spacing: 0.04em;
+  table:not(.summary-table) td.td-emp small {
+    color: var(--ink-faint);
+    margin-top: 2px;
+    font-weight: 500;
+    font-size: 0.7rem;
   }
 
   /* Branch/Dept Sub-Card */
-  #tab-daily .daily-table td[data-label="Branch/Dept"] {
+  table:not(.summary-table) td[data-label="Branch/Dept"],
+  table:not(.summary-table) td[data-label="Branch"],
+  table:not(.summary-table) td[data-label="Department"] {
     grid-column: 1 / -1 !important;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 16px !important;
-    background: var(--surface-faint);
-    border-color: var(--border-soft) !important;
-    min-height: 40px;
-    margin-bottom: 2px;
   }
 
-  #tab-daily .daily-table td[data-label="Branch/Dept"]:before {
-    margin-bottom: 0;
-  }
-
-  #tab-daily .daily-table .org-cell {
+  table:not(.summary-table) .org-cell {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
   }
 
-  #tab-daily .daily-table .org-cell strong {
+  table:not(.summary-table) .org-cell strong {
     font-size: 0.8rem;
   }
 
-  #tab-daily .daily-table .org-cell small {
+  table:not(.summary-table) .org-cell small {
     color: var(--ink-faint);
     font-size: 0.72rem;
   }
 
   /* Status spans full width for importance */
-  #tab-daily .daily-table td[data-label="Status"] {
+  table:not(.summary-table) td[data-label="Status"] {
     grid-column: 1 / -1 !important;
-    min-height: 48px;
-    background: var(--surface-soft);
+    align-items: flex-start;
+    padding-top: 12px !important;
+    margin-top: 4px;
+    border-top: 1px solid var(--border) !important;
   }
 
   /* BOTTOM NAVIGATION POLISH */
@@ -3973,6 +3958,10 @@ thead th {
 .table-wrap {
   overflow-x: auto;
   border-radius: var(--radius-sm);
+}
+
+.table-wrap .daily-table thead {
+  display: none !important;
 }
 
 .table-footer-note {
