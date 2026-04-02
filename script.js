@@ -1,4 +1,4 @@
-const S = {
+window.S = {
   excelFiles: [], datFiles: [], shiftMap: {},
   records: [], filtered: [],
   sortCol: 'date', sortDir: 1,
@@ -47,8 +47,12 @@ const THEMES = [
   { id: 'sapphire', label: 'Sapphire' }
 ];
 const STORAGE_KEYS = {
-  records: 'hr_att_v3',
-  ui: 'hr_att_ui_v1'
+  records: 'hr_att_v4',
+  ui: 'hr_att_ui_v2'
+};
+const LEGACY_STORAGE_KEYS = {
+  records: ['hr_att_v3'],
+  ui: ['hr_att_ui_v1']
 };
 const MOBILE_FILTER_BREAKPOINT = 720;
 const layoutObservers = [];
@@ -56,6 +60,10 @@ const layoutObservers = [];
 function isMobileFilterViewport() {
   return window.matchMedia(`(max-width: ${MOBILE_FILTER_BREAKPOINT}px)`).matches;
 }
+
+const CLR = ['#1B4FD8', '#0B7B60', '#8A5A00', '#5B3FA6', '#C0280C', '#3E4B66'];
+function avatarCol(n) { return CLR[n.charCodeAt(0) % CLR.length] }
+function initials(n) { return n.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() }
 
 function getRecordDateBounds() {
   const dates = S.records.map(r => r.date).filter(Boolean).sort();
@@ -121,7 +129,18 @@ function updateDailyTitle() {
 
   const count = S.filtered.length;
   const suffix = count === S.records.length ? '' : ' filtered';
-  title.innerHTML = `Daily Attendance Records (<span id="tb-daily-title-count">${count}</span>${suffix})`;
+
+  // Intelligent Context: Find the Month and Year from the active date range
+  const fv = document.getElementById('date-from')?.value;
+  let contextStr = '';
+  if (fv) {
+    const d = new Date(fv + 'T12:00:00');
+    const monthName = d.toLocaleDateString('en-US', { month: 'short' });
+    const year = d.getFullYear();
+    contextStr = ` - <span style="color:var(--teal)">${monthName} ${year}</span>`;
+  }
+
+  title.innerHTML = `Daily Attendance Records${contextStr} (<span id="tb-daily-title-count">${count}</span>${suffix})`;
 }
 
 function syncStickyLayout() {
@@ -148,7 +167,7 @@ function queueStickyLayoutSync() {
 }
 
 function getShiftDurationMinutes(shiftStart, shiftEnd) {
-  if (shiftStart == null || shiftEnd == null) return 480;
+  if (shiftStart === null || shiftEnd === null || (shiftStart === 0 && shiftEnd === 0)) return 0;
   return shiftEnd >= shiftStart ? shiftEnd - shiftStart : (24 * 60 - shiftStart) + shiftEnd;
 }
 
@@ -175,19 +194,33 @@ function getEarlyArrivalMinutes(shiftStart, inM) {
   return Math.max(0, sStart - inTime);
 }
 
-function getOvertimeMinutes(shiftStart, shiftEnd, outM, workedMins) {
-  if (outM == null) return 0;
-  if (shiftStart == null || shiftEnd == null) {
-    return Math.max(0, workedMins - 480);
+function isAttendedStatus(status) {
+  return ['Present', 'Late', 'Late (Comp)'].includes(status);
+}
+
+function hasLateArrival(record) {
+  return Number(record?.lateMins || 0) > 0;
+}
+
+function getWorkedMinutesFromPunches(punches) {
+  if (!Array.isArray(punches) || punches.length < 2) return 0;
+
+  // Sum complete in/out pairs so lunch breaks or stray extra punches do not inflate hours worked.
+  let total = 0;
+  for (let i = 0; i + 1 < punches.length; i += 2) {
+    total += Math.max(0, Math.round((punches[i + 1] - punches[i]) / 60000));
   }
-  if (shiftEnd < shiftStart) {
-    const normalizedOut = outM < shiftStart ? outM + 1440 : outM;
-    return Math.max(0, normalizedOut - (shiftEnd + 1440));
-  }
-  return Math.max(0, outM - shiftEnd);
+  return total;
+}
+
+function getOvertimeMinutes(shiftStart, shiftEnd, workedMins) {
+  if (shiftStart === null || shiftEnd === null || (shiftStart === 0 && shiftEnd === 0)) return 0;
+  const scheduledMins = getShiftDurationMinutes(shiftStart, shiftEnd);
+  return Math.max(0, Number(workedMins || 0) - scheduledMins);
 }
 
 function initApp() {
+  window.closeSidebar();
   bindDatePickers();
   bindFilterMenus();
 
@@ -214,12 +247,12 @@ function initApp() {
     document.fonts.ready.then(syncResponsiveUi).catch(() => { });
   }
 
+  migrateStoredSession();
   restoreSavedSession();
   syncResponsiveUi();
 }
 
 window.addEventListener('resize', syncResponsiveUi);
-initApp();
 
 function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme') || 'obsidian';
@@ -257,6 +290,22 @@ function persistRecords() {
     return;
   }
   localStorage.setItem(STORAGE_KEYS.records, JSON.stringify(S.records));
+}
+
+function migrateStoredSession() {
+  const hasCurrentSession = !!localStorage.getItem(STORAGE_KEYS.records);
+  const hadLegacySession = !hasCurrentSession && LEGACY_STORAGE_KEYS.records.some(key => localStorage.getItem(key));
+
+  LEGACY_STORAGE_KEYS.records.forEach(key => {
+    if (key !== STORAGE_KEYS.records) localStorage.removeItem(key);
+  });
+  LEGACY_STORAGE_KEYS.ui.forEach(key => {
+    if (key !== STORAGE_KEYS.ui) localStorage.removeItem(key);
+  });
+
+  if (hadLegacySession) {
+    showToast('Overtime rules were updated. Please regenerate the report from the source files.');
+  }
 }
 
 function persistUiState() {
@@ -601,13 +650,15 @@ async function generateReport() {
         const ps = g ? g.punches.sort((a, b) => a - b) : [];
 
         const dy = new Date(dt + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-        const sd = (info.shiftStart !== null && info.shiftEnd !== null) ? m2t(info.shiftStart) + ' - ' + m2t(info.shiftEnd) : '--';
+        const hasShift = info.shiftStart !== null && info.shiftEnd !== null && (info.shiftStart !== 0 || info.shiftEnd !== 0);
+        const sd = hasShift ? m2t(info.shiftStart) + ' - ' + m2t(info.shiftEnd) : '--';
 
         let first = null, last = null, hrs = 0, inM = null, outM = null, status = 'Absent', lateMins = 0, earlyMins = 0, earlyArrivalMins = 0, otMins = 0;
-        const sDur = getShiftDurationMinutes(info.shiftStart, info.shiftEnd);
+        const sDur = hasShift ? getShiftDurationMinutes(info.shiftStart, info.shiftEnd) : 0;
 
         const isHol = S.holidays.find(h => {
-          const bMatch = h.b.some(b => info.branch.includes(b));
+          const empBranch = (info.branch || '').trim().toLowerCase();
+          const bMatch = h.b.some(b => empBranch.includes(b.trim().toLowerCase()));
           if (!bMatch) return false;
           if (h.d2) return dt >= h.d && dt <= h.d2;
           return dt === h.d;
@@ -620,8 +671,8 @@ async function generateReport() {
 
         if (ps.length > 0) {
           first = ps[0]; last = ps[ps.length - 1];
-          hrs = (last - first) / 3600000;
-          const workedMins = Math.max(0, Math.round((last - first) / 60000));
+          const workedMins = getWorkedMinutesFromPunches(ps);
+          hrs = workedMins / 60;
           inM = first.getHours() * 60 + first.getMinutes();
           outM = last.getHours() * 60 + last.getMinutes();
           status = 'Present';
@@ -629,23 +680,25 @@ async function generateReport() {
           const sSt = info.shiftStart;
           const sEn = info.shiftEnd;
 
-          lateMins = getLateMinutes(sSt, inM);
-          if (lateMins > 15) status = 'Late';
+          lateMins = hasShift ? getLateMinutes(sSt, inM) : 0;
+          if (hasShift && lateMins > 15) status = 'Late';
 
-          earlyArrivalMins = getEarlyArrivalMinutes(sSt, inM);
-          earlyMins = getEarlyMinutes(sSt, sEn, outM);
+          earlyArrivalMins = hasShift ? getEarlyArrivalMinutes(sSt, inM) : 0;
+          earlyMins = hasShift ? getEarlyMinutes(sSt, sEn, outM) : 0;
 
           if (hrs < 4.5) status = 'Half Day';
           if (hrs < 0.25 || ps.length === 1) status = 'Missed Punch';
 
           if (status !== 'Missed Punch') {
-            otMins = getOvertimeMinutes(sSt, sEn, outM, workedMins);
+            otMins = getOvertimeMinutes(sSt, sEn, workedMins);
           }
         }
 
         let gapMins = 0;
-        if (status === 'Absent') gapMins = sDur;
-        else if (['Present', 'Late', 'Late (Comp)', 'Half Day'].includes(status)) gapMins = sDur - Math.round(hrs * 60);
+        if (hasShift) {
+          if (status === 'Absent') gapMins = sDur;
+          else if (['Present', 'Late', 'Late (Comp)', 'Half Day'].includes(status)) gapMins = sDur - Math.round(hrs * 60);
+        }
 
         if (status === 'Late' && gapMins <= 0) status = 'Late (Comp)';
 
@@ -719,6 +772,7 @@ function buildReport() {
   document.getElementById('tb-absent').textContent = S.absentRecs.length;
   document.getElementById('tb-early').textContent = S.earlyRecs.length;
   S.filtered = [...S.records]; S.page = 1;
+  renderAuditSelects();
   updateDailyTitle();
   renderStats(S.records); renderTable(); renderSubTables(); renderInsights();
   persistRecords();
@@ -731,8 +785,9 @@ function detectMachineFailures() {
   const r = S.records; if (!r.length) return;
 
   function isHolidayForBranch(date, branch) {
+    const curBranch = (branch || '').trim().toLowerCase();
     return S.holidays.some(h => {
-      const bMatch = h.b.some(b => (branch || '').includes(b));
+      const bMatch = h.b.some(b => curBranch.includes(b.trim().toLowerCase()));
       if (!bMatch) return false;
       if (h.d2) return date >= h.d && date <= h.d2;
       return date === h.d;
@@ -809,7 +864,7 @@ function renderInsights() {
     if (!x.branch) return;
     if (!brData[x.branch]) brData[x.branch] = { days: 0, present: 0 };
     brData[x.branch].days++;
-    if (x.status === 'Present' || x.status === 'Late') brData[x.branch].present++;
+    if (isAttendedStatus(x.status)) brData[x.branch].present++;
   });
   let topBr = '', topPct = -1;
   Object.keys(brData).forEach(b => {
@@ -818,7 +873,7 @@ function renderInsights() {
   });
 
   const latePct = Math.round((S.lateRecs.length / r.length) * 100);
-  const totalAtt = Math.round((r.filter(x => x.status === 'Present' || x.status === 'Late').length / r.length) * 100);
+  const totalAtt = Math.round((r.filter(x => isAttendedStatus(x.status)).length / r.length) * 100);
 
   ins.innerHTML = `
     <div class="insight-item">
@@ -1026,13 +1081,12 @@ function renderStats(recs) {
   document.getElementById('st-abs-sub').textContent = recs.length ? Math.round(absent / recs.length * 100) + '% of records' : '';
 }
 
-const CLR = ['#1B4FD8', '#0B7B60', '#8A5A00', '#5B3FA6', '#C0280C', '#3E4B66'];
-function avatarCol(n) { return CLR[n.charCodeAt(0) % CLR.length] }
-function initials(n) { return n.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() }
+
 
 function renderSummary() {
   const r = S.filtered;
-  const container = document.getElementById('tab-summary');
+  const container = document.getElementById('summary-content');
+  if (!container) return;
   const summarySearchValue = document.getElementById('search-summary')?.value || '';
   const searchVal = summarySearchValue.toLowerCase();
 
@@ -1047,7 +1101,7 @@ function renderSummary() {
     if (!x.branch) return;
     if (!brs[x.branch]) brs[x.branch] = { name: x.branch, total: 0, att: 0, ot: 0 };
     brs[x.branch].total++;
-    if (['Present', 'Late'].includes(x.status)) brs[x.branch].att++;
+    if (isAttendedStatus(x.status)) brs[x.branch].att++;
     brs[x.branch].ot += (x.otMins || 0);
   });
 
@@ -1069,11 +1123,13 @@ function renderSummary() {
         total: 0,
         present: 0,
         late: 0,
-        ot: 0
+        ot: 0,
+        _h: 0
       };
     }
     const s = empSummary[x.uid];
     s.total++;
+    s._h += (x.hoursWorked || 0);
     if (['Present', 'Late', 'Late (Comp)'].includes(x.status)) s.present++;
     if (x.lateMins > 0) s.late++;
     s.ot += (x.otMins || 0);
@@ -1081,7 +1137,8 @@ function renderSummary() {
 
   let sortedEmps = Object.values(empSummary).map(e => ({
     ...e,
-    attPct: Math.round((e.present / e.total) * 100)
+    attPct: Math.round((e.present / e.total) * 100),
+    avgHrs: (e._h / e.total).toFixed(1)
   })).sort((a, b) => b.attPct - a.attPct);
 
   if (searchVal) {
@@ -1093,112 +1150,108 @@ function renderSummary() {
     );
   }
 
+  // Graphical Helper: Circular Progress Ring
+  const ring = (pct, color, size = 64) => {
+    const r = size * 0.4;
+    const circ = 2 * Math.PI * r;
+    const off = circ - (pct / 100) * circ;
+    return `
+      <div class="stat-ring-wrap" style="width:${size}px; height:${size}px">
+        <svg viewBox="0 0 ${size} ${size}">
+          <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="4" />
+          <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round" 
+            style="stroke-dasharray:${circ}; stroke-dashoffset:${off}; transition: stroke-dashoffset 1s ease" />
+        </svg>
+        <span class="ring-label">${pct}%</span>
+      </div>
+    `;
+  };
+
+  const avgStability = Math.round(sortedBr.reduce((s, b) => s + b.score, 0) / Math.max(1, sortedBr.length));
+  const totalOtHrs = Math.round(sortedEmps.reduce((s, e) => s + e.ot, 0) / 60);
+
   container.innerHTML = `
-    <div class="summary-shell">
-      <div class="panel-head summary-panel-head">
-        <h2>Employee Summary</h2>
-        <div class="search-wrap">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="11" cy="11" r="6"></circle>
-            <path d="m20 20-4.35-4.35"></path>
-          </svg>
-          <input id="search-summary" class="search-inp" type="search" placeholder="Search summary cards"
-            oninput="renderSummary()">
+    <div class="summary-shell anim-fade">
+      <div class="briefing-kpis">
+        <div class="b-kpi glass-tile">
+          ${ring(avgStability, 'var(--teal)', 72)}
+          <div class="b-kpi-data"><span class="b-kpi-label">Network Stability</span><small>Avg Attendance %</small></div>
+        </div>
+        <div class="b-kpi glass-tile">
+          <div class="b-stat-box" style="color:var(--violet)"><span class="b-stat-val">${totalOtHrs}h</span><small>Total OT Captured</small></div>
+          <div class="b-kpi-data"><span class="b-kpi-label">Labor Utilization</span></div>
+        </div>
+        <div class="b-kpi glass-tile">
+          <div class="b-stat-box" style="color:var(--red)"><span class="b-stat-val">${S.failureDates?.length || 0}</span><small>System Alerts</small></div>
+          <div class="b-kpi-data"><span class="b-kpi-label">Terminal Health</span></div>
         </div>
       </div>
+
       <div class="summary-section">
-        <div class="section-header-row">
+        <div class="section-header-row briefing-header">
           <h3>Branch Performance Leaderboard</h3>
           <span class="badge pills-info">${sortedBr.length} Branches</span>
         </div>
         <div class="summary-table-wrap">
           <table class="summary-table">
-            <thead>
-              <tr>
-                <th>Branch</th>
-                <th>Stability (Att %)</th>
-                <th>Avg OT</th>
-                <th>Grade</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Branch</th><th>Stability</th><th>Avg OT</th><th>Grade</th></tr></thead>
             <tbody>
               ${sortedBr.map(b => `
                 <tr class="clickable-row" onclick="filterByBranch('${b.name.replace(/'/g, "\\'")}')">
-                  <td class="summary-main" data-label="Branch"><strong>${b.name}</strong></td>
-                  <td class="summary-progress" data-label="Stability">
-                    <div class="progress-mini">
-                      <div class="pm-bar"><div style="width:${b.score}%"></div></div>
-                      <span>${b.score}%</span>
-                    </div>
+                  <td class="summary-main"><strong>${b.name}</strong></td>
+                  <td class="summary-progress">
+                    <div class="progress-mini"><div class="pm-bar"><div style="width:${b.score}%"></div></div><span>${b.score}%</span></div>
                   </td>
-                  <td class="mono" data-label="Avg OT">${b.avgOt}m</td>
-                  <td data-label="Grade"><span class="badge ${b.score > 85 ? 'pills-success' : b.score > 70 ? 'pills-warning' : 'pills-danger'}">${b.score > 85 ? 'A' : b.score > 70 ? 'B' : 'C'}</span></td>
-                </tr>
-              `).join('')}
+                  <td class="mono">${b.avgOt}m</td>
+                  <td><span class="badge ${b.score > 85 ? 'pills-success' : b.score > 70 ? 'pills-warning' : 'pills-danger'}">${b.score > 85 ? 'A' : b.score > 70 ? 'B' : 'C'}</span></td>
+                </tr>`).join('')}
             </tbody>
           </table>
         </div>
       </div>
 
-      <div class="summary-section summary-section-spaced">
-        <div class="section-header-row">
-          <h3>Employee Efficiency Rankings</h3>
-          <span class="badge pills-glass">${sortedEmps.length} Employees</span>
-        </div>
-        <div class="summary-table-wrap">
-          <table class="summary-table">
-            <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Branch / Dept</th>
-                <th>Stability</th>
-                <th>OT (Hrs)</th>
-                <th>Late Days</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${sortedEmps.slice(0, 50).map(e => `
-                <tr class="clickable-row" onclick="showEmpProfile('${e.uid}')">
-                  <td class="td-emp summary-main" data-label="Employee">
-                    <div class="emp-cell-meta">
-                      <strong>${e.name}</strong>
-                      <small>ID ${e.uid}</small>
-                    </div>
-                  </td>
-                  <td class="summary-org" data-label="Branch / Dept">
-                    <div class="org-cell">
-                      <strong>${e.branch || '--'}</strong>
-                      <small>${e.dept || '--'}</small>
-                    </div>
-                  </td>
-                  <td class="summary-progress" data-label="Stability">
-                    <div class="progress-mini">
-                      <div class="pm-bar"><div class="att-bar ${e.attPct < 70 ? 'low' : ''}" style="width:${e.attPct}%"></div></div>
-                      <span>${e.attPct}%</span>
-                    </div>
-                  </td>
-                  <td class="mono" data-label="OT (Hrs)">${(e.ot / 60).toFixed(1)}h</td>
-                  <td data-label="Late Days"><span class="badge ${e.late > 3 ? 'pills-danger' : e.late > 0 ? 'pills-warning' : 'pills-success'}">${e.late}</span></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ${sortedEmps.length > 50 ? `<div class="table-footer-note">Showing top 50 performers. Use search to find specific employees.</div>` : ''}
-        </div>
+      <div class="section-header-row briefing-header" style="margin-top:32px">
+        <h3>Efficiency Intelligence Grid</h3>
+        <span class="badge pills-glass">${sortedEmps.length} ANALYTICAL PROFILES</span>
       </div>
-      
-      <div id="summary-cards" class="summary-grid" style="display:none"></div>
+
+      <div class="intelligence-grid-dashboard">
+        ${sortedEmps.slice(0, 72).map(e => {
+    const tags = [];
+    if (e.attPct > 95) tags.push('<span class="tag-stable">STABLE</span>');
+    if (e.ot > 300) tags.push('<span class="tag-ot">OT WARRIOR</span>');
+    if (e.late > 2) tags.push('<span class="tag-late">LATE PATTERN</span>');
+    if (Number(e.avgHrs) > 9) tags.push('<span class="tag-early">MORNING LARK</span>');
+
+    return `
+            <div class="dashboard-tile anim-fade" onclick="window.showEmpProfile('${e.uid}')">
+              <div class="tile-top">
+                <div class="tile-avatar" style="background:${avatarCol(e.name)}">${initials(e.name)}</div>
+                <div class="tile-title"><strong>${e.name}</strong><small>ID: ${e.uid} | ${e.branch || 'General'}</small></div>
+                <div class="tile-ring-mini">${ring(e.attPct, e.attPct < 85 ? 'var(--orange)' : 'var(--teal)', 44)}</div>
+              </div>
+              <div class="tile-mid">
+                <div class="tm-stat"><small>OT (HRS)</small><strong>${(e.ot / 60).toFixed(1)}h</strong></div>
+                <div class="tm-stat"><small>LATE</small><strong style="${e.late > 3 ? 'color:var(--red)' : ''}">${e.late} Days</strong></div>
+                <div class="tm-stat"><small>AVG DAY</small><strong>${e.avgHrs}h</strong></div>
+              </div>
+              <div class="tile-tags">${tags.length ? tags.join('') : '<span class="tag-consistent">CONSISTENT</span>'}</div>
+            </div>
+          `;
+  }).join('')}
+      </div>
+      ${sortedEmps.length > 72 ? `<div class="dashboard-more">Searching top performers. Use search to view ${sortedEmps.length - 72} more.</div>` : ''}
     </div>
   `;
   const summarySearch = document.getElementById('search-summary');
-  if (summarySearch) summarySearch.value = summarySearchValue;
+  if (summarySearch) summarySearch.value = searchVal;
 }
 
 function renderSubTables() {
   const row = (x, i, type) => {
     const isComp = x.earlyArrivalMins >= x.earlyMins && x.earlyMins > 0;
 
-    // Safety check for missing properties (fixes 'undefined' issue)
+    // Safety check for missing properties
     const earlyArrival = x.earlyArrivalBy || '--';
     const lastOut = x.lastOut || '--';
     const earlyBy = x.earlyBy || '--';
@@ -1213,9 +1266,9 @@ function renderSubTables() {
         <td class="mono" data-label="Date">${x.date} <span class="day-span">${x.day}</span></td>
         <td data-label="Shift"><span class="shift-chip">${x.shiftDisplay}</span></td>
         <td class="mono" data-label="IN">${x.firstIn}</td>
-        <td class="mono early-in-v" data-label="Arrived Early">${x.earlyArrivalBy}</td>
-        <td class="mono early-v" data-label="Left At">${x.lastOut}</td>
-        <td class="early-v" data-label="Left Early By">${x.earlyBy} ${isComp ? '<span class="comp-tag">Compensated</span>' : ''}</td>
+        <td class="mono early-in-v" data-label="Arrived Early">${earlyArrival}</td>
+        <td class="mono early-v" data-label="Left At">${lastOut}</td>
+        <td class="early-v" data-label="Left Early By">${earlyBy} ${isComp ? '<span class="comp-tag">Compensated</span>' : ''}</td>
       </tr>`;
     }
 
@@ -1247,7 +1300,7 @@ function downloadExcel() {
   const wb = XLSX.utils.book_new();
 
   // 1. DASHBOARD OVERVIEW SHEET
-  const attPct = Math.round((data.filter(x => ['Present', 'Late'].includes(x.status)).length / data.length) * 100);
+  const attPct = Math.round((data.filter(x => isAttendedStatus(x.status)).length / data.length) * 100);
   const overview = [
     { 'Metric': 'Report Period', 'Value': `${document.getElementById('date-from').value} to ${document.getElementById('date-to').value}` },
     { 'Metric': 'Total Selected Records', 'Value': data.length },
@@ -1268,10 +1321,10 @@ function downloadExcel() {
     };
     const s = sm[r.uid]; s['Total Days']++; s['_h'] += r.hoursWorked;
     s['Total OT (Mins)'] += (r.otMins || 0);
-    if (r.status === 'Present') s['Present']++;
-    else if (r.status === 'Late') { s['Present']++; s['Late']++ }
-    else if (r.status === 'Half Day') s['Half Day']++;
-    else s['Absent']++;
+    if (isAttendedStatus(r.status)) s['Present']++;
+    if (hasLateArrival(r)) s['Late']++;
+    if (r.status === 'Half Day') s['Half Day']++;
+    if (['Absent', 'System Error'].includes(r.status)) s['Absent']++;
   });
   const sumRows = Object.values(sm).map(s => {
     s['Avg Hrs/Day'] = Math.round(s['_h'] / s['Total Days'] * 100) / 100;
@@ -1302,7 +1355,7 @@ function downloadExcel() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(daily), 'Daily Detail');
 
   // 4. LATE REPORT
-  const lr = data.filter(r => r.lateMins > 0);
+  const lr = data.filter(r => hasLateArrival(r));
   if (lr.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lr.map(r => ({ 'Emp ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Department': r.department, 'Date': r.date, 'Day': r.day, 'Shift': r.shiftDisplay, 'Arrived': r.firstIn, 'Late By': r.lateBy, 'Late Mins': r.lateMins }))), 'Late Report');
 
   // 5. ABSENT REPORT
@@ -1310,24 +1363,54 @@ function downloadExcel() {
   if (ar.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ar.map(r => ({ 'Emp ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Department': r.department, 'Date': r.date, 'Day': r.day, 'Shift': r.shiftDisplay }))), 'Absent Report');
 
   // 6. EARLY DEPARTURE
-  const er = data.filter(r => r.earlyMins > 0);
+  const er = data.filter(r => Number(r.earlyMins || 0) > 0);
   if (er.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(er.map(r => ({ 'Emp ID': r.uid, 'Name': r.name, 'Branch': r.branch, 'Department': r.department, 'Date': r.date, 'Day': r.day, 'Shift': r.shiftDisplay, 'Early In Mins': r.earlyArrivalMins, 'Left At': r.lastOut, 'Left Early By': r.earlyBy, 'Early Out Mins': r.earlyMins }))), 'Early Departure');
 
   // 7. SYSTEM AUDIT (Machine Failures)
   if (S.failureDates && S.failureDates.length > 0) {
     const auditRows = S.failureDates.map(f => ({
-      'Date': f.date,
-      'Branch': f.branch,
-      'Failure Intensity': f.pct + '% Absent',
-      'Reason': f.reason,
-      'Affected Count': f.affected,
-      'Action Taken': 'Records Auto-Tagged as System Error (Not Penalized)'
+      'Date': f.date, 'Branch': f.branch, 'Failure Intensity': f.pct + '% Absent', 'Reason': f.reason, 'Affected Count': f.affected, 'Action Taken': 'Auto-Tagged'
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(auditRows), 'System Audit');
   }
 
   const from = document.getElementById('date-from').value || 'start', to = document.getElementById('date-to').value || 'end';
   XLSX.writeFile(wb, `Attendance_Analytics_Report_${from}_to_${to}.xlsx`);
+}
+
+function renderAuditSelects() {
+  const years = [...new Set(S.records.map(r => new Date(r.date + 'T12:00:00').getFullYear()))].sort((a, b) => b - a);
+  const yp = document.getElementById('year-picker');
+  const mp = document.getElementById('month-picker');
+  if (!yp || !mp) return;
+
+  yp.innerHTML = '<option value="" disabled selected>Year</option>' +
+    years.map(y => `<option value="${y}">${y}</option>`).join('');
+
+  if (years.length === 1) yp.value = years[0];
+}
+
+function jumpToDateContext() {
+  const yp = document.getElementById('year-picker');
+  const mp = document.getElementById('month-picker');
+  if (!yp || !mp) return;
+
+  const year = yp.value;
+  const month = mp.value;
+
+  if (!year || month === '') return;
+
+  const targetMonth = parseInt(month);
+  const targetYear = parseInt(year);
+
+  const pad = n => String(n).padStart(2, '0');
+  const dFrom = `${targetYear}-${pad(targetMonth + 1)}-01`;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const dTo = `${targetYear}-${pad(targetMonth + 1)}-${pad(lastDay)}`;
+
+  document.getElementById('date-from').value = dFrom;
+  document.getElementById('date-to').value = dTo;
+  applyFilters();
 }
 
 function setDateRange(type) {
@@ -1342,9 +1425,18 @@ function setDateRange(type) {
   } else if (type === 'clear') {
     document.getElementById('date-from').value = '';
     document.getElementById('date-to').value = '';
+    const mp = document.getElementById('month-picker');
+    if (mp) mp.value = '';
+    const yp = document.getElementById('year-picker');
+    if (yp) yp.value = '';
     applyFilters();
     return;
   }
+
+  // Clear month picker if a preset button is clicked instead
+  const mp = document.getElementById('month-picker');
+  if (mp) mp.value = '';
+
   document.getElementById('date-from').value = from.toISOString().split('T')[0];
   document.getElementById('date-to').value = to.toISOString().split('T')[0];
   applyFilters();
@@ -1364,8 +1456,8 @@ function renderSparklines() {
       const dayRecs = r.filter(x => x.date === d);
       if (!dayRecs.length) return { x: i, y: 50 };
       let val = 0;
-      if (type === 'att') val = (dayRecs.filter(x => ['Present', 'Late'].includes(x.status)).length / dayRecs.length) * 100;
-      else if (type === 'late') val = (dayRecs.filter(x => x.status === 'Late').length / dayRecs.length) * 100;
+      if (type === 'att') val = (dayRecs.filter(x => isAttendedStatus(x.status)).length / dayRecs.length) * 100;
+      else if (type === 'late') val = (dayRecs.filter(x => hasLateArrival(x)).length / dayRecs.length) * 100;
       else if (type === 'abs') val = (dayRecs.filter(x => x.status === 'Absent').length / dayRecs.length) * 100;
       else if (id === 'days') val = 100;
       return { x: i, y: 100 - (val || 0) };
@@ -1381,7 +1473,36 @@ function renderSparklines() {
   });
 }
 
+function renderSparklines() {
+  const r = S.records;
+  if (!r.length) return;
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return d.toISOString().split('T')[0];
+  }).reverse();
 
+  const getPoints = (type, id) => {
+    return last7.map((d, i) => {
+      const dayRecs = r.filter(x => x.date === d);
+      if (!dayRecs.length) return { x: i, y: 50 };
+      let val = 0;
+      if (type === 'att') val = (dayRecs.filter(x => isAttendedStatus(x.status)).length / dayRecs.length) * 100;
+      else if (type === 'late') val = (dayRecs.filter(x => hasLateArrival(x)).length / dayRecs.length) * 100;
+      else if (type === 'abs') val = (dayRecs.filter(x => x.status === 'Absent').length / dayRecs.length) * 100;
+      else if (id === 'days') val = 100;
+      return { x: i, y: 100 - (val || 0) };
+    });
+  };
+
+  ['att', 'late', 'abs', 'days'].forEach(id => {
+    const svg = document.getElementById('sp-' + id);
+    if (!svg) return;
+    const pts = getPoints(id, id);
+    const path = `M ${pts.map(p => `${p.x * 25},${p.y * 0.3}`).join(' L ')}`;
+    svg.innerHTML = `<path d="${path}" fill="none" stroke-width="2" stroke-linecap="round" />`;
+  });
+}
 
 function renderHeatmap(uid) {
   const r = S.records.filter(x => x.uid === uid);
@@ -1404,7 +1525,6 @@ function getProfileFilterMeta(filter) {
   if (!filter || filter === 'all') {
     return { key: 'all', label: 'All activity', match: () => true };
   }
-
   if (filter === 'attended') {
     return {
       key: filter,
@@ -1412,7 +1532,6 @@ function getProfileFilterMeta(filter) {
       match: rec => ['Present', 'Late', 'Late (Comp)'].includes(rec.status)
     };
   }
-
   if (filter === 'exceptions') {
     return {
       key: filter,
@@ -1420,7 +1539,6 @@ function getProfileFilterMeta(filter) {
       match: rec => ['Missed Punch', 'System Error'].includes(rec.status)
     };
   }
-
   if (filter.startsWith('status:')) {
     const status = filter.slice(7);
     return {
@@ -1429,12 +1547,7 @@ function getProfileFilterMeta(filter) {
       match: rec => rec.status === status
     };
   }
-
   return { key: 'all', label: 'All activity', match: () => true };
-}
-
-function isProfileFilterActive(filter) {
-  return (S.activeProfile?.filter || 'all') === filter;
 }
 
 function setProfileFilter(filter) {
@@ -1467,46 +1580,27 @@ function selectHeatmapDay(el) {
   const wrap = el.closest('.heatmap-wrap');
   const detail = document.getElementById('heatmap-detail');
   if (!wrap || !detail) return;
-
   wrap.querySelectorAll('.hm-box.active').forEach(box => box.classList.remove('active'));
   el.classList.add('active');
-
   const date = el.dataset.date || '--';
   const day = el.dataset.day || '--';
   const status = el.dataset.status || 'None';
-  detail.innerHTML = `
-    <div class="heatmap-detail-date">${date} <span>${day}</span></div>
-    <div class="heatmap-detail-status">${status}</div>
-  `;
-}
-
-function closeSidebar() {
-  const sidebar = document.getElementById('emp-sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  S.activeProfile = { uid: '', filter: 'all' };
-  if (sidebar) sidebar.classList.remove('open');
-  if (overlay) {
-    overlay.classList.remove('open');
-    setTimeout(() => overlay.style.display = 'none', 300);
-  }
+  detail.innerHTML = `<div class="heatmap-detail-date">${date} <span>${day}</span></div><div class="heatmap-detail-status">${status}</div>`;
 }
 
 function genSpark(f) {
   const last14 = f.slice(-14);
   if (!last14.length) return '';
-  const pts = last14.map((x, i) => ({ x: i * 4.5, y: ['Present', 'Late'].includes(x.status) ? 5 : 20 }));
+  const pts = last14.map((x, i) => ({ x: i * 4.5, y: isAttendedStatus(x.status) ? 5 : 20 }));
   const d = `M ${pts.map(p => `${p.x},${p.y}`).join(' L ')}`;
   return `<svg class="sparkline-trend" viewBox="0 0 60 25"><path d="${d}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
 }
-
-
 
 function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
   const r = S.records.filter(x => x.uid === uid);
   const f = S.filtered.filter(x => x.uid === uid);
   if (!r.length) return;
   const profileRecs = f.length ? f : r;
-
   const name = r[0].name;
   const dept = r[0].department;
   const branch = r[0].branch;
@@ -1520,30 +1614,26 @@ function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
   const filteredProfileRecs = profileRecs.filter(filterMeta.match);
   S.activeProfile = { uid, filter: filterMeta.key };
 
-  // Stats for Rings
   const totalRecords = profileRecs.length;
   const total = totalRecords || 1;
-  const presentRecs = profileRecs.filter(x => ['Present', 'Late'].includes(x.status));
+  const presentRecs = profileRecs.filter(x => isAttendedStatus(x.status));
   const attPct = Math.round((presentRecs.length / total) * 100);
-  const lateRecs = profileRecs.filter(x => x.status === 'Late');
+  const lateRecs = profileRecs.filter(x => hasLateArrival(x));
   const latePct = Math.round((lateRecs.length / total) * 100);
   const otHours = Math.round(profileRecs.reduce((sum, x) => sum + (x.otMins || 0), 0) / 60);
-  const avgHours = totalRecords
-    ? Math.round((profileRecs.reduce((sum, x) => sum + Number(x.hoursWorked || 0), 0) / totalRecords) * 100) / 100
-    : 0;
+  const avgHours = totalRecords ? Math.round((profileRecs.reduce((sum, x) => sum + Number(x.hoursWorked || 0), 0) / totalRecords) * 100) / 100 : 0;
   const exceptionCount = profileRecs.filter(x => ['Missed Punch', 'System Error'].includes(x.status)).length;
+
   const statusOrder = ['Present', 'Late', 'Late (Comp)', 'Half Day', 'Missed Punch', 'Absent', 'Holiday', 'Week Off', 'System Error'];
   const statusCounts = Object.fromEntries(statusOrder.map(status => [
     status,
     profileRecs.filter(x => x.status === status).length
   ]));
 
-  // Shift DNA: Average Arrival/Departure
-  const validIn = presentRecs.map(x => timeToMins(x.firstIn)).filter(m => m !== null);
+  const validIn = (presentRecs.length ? presentRecs : []).map(x => timeToMins(x.firstIn)).filter(m => m !== null);
   const avgIn = validIn.length ? Math.round(validIn.reduce((a, b) => a + b) / validIn.length) : null;
   const avgInStr = minsToTime(avgIn);
 
-  // Heatmap Data (Full Range)
   const fv = document.getElementById('date-from').value;
   const tv = document.getElementById('date-to').value;
   let dates = [];
@@ -1555,17 +1645,11 @@ function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
       curr.setDate(curr.getDate() + 1);
     }
   }
-
-  const heroMeta = [`ID ${uid}`, dept, branch].filter(Boolean);
   const weekRows = [];
   for (let i = 0; i < dates.length; i += 7) weekRows.push(dates.slice(i, i + 7));
-  const defaultHeatmapDate = filteredProfileRecs.length
-    ? [...dates].reverse().find(d => filteredProfileRecs.some(x => x.date === d)) || ''
-    : '';
+  const defaultHeatmapDate = filteredProfileRecs.length ? [...dates].reverse().find(d => filteredProfileRecs.some(x => x.date === d)) || '' : '';
   const defaultHeatmapRec = defaultHeatmapDate ? profileRecs.find(x => x.date === defaultHeatmapDate) : null;
-  const defaultHeatmapDay = defaultHeatmapDate
-    ? (defaultHeatmapRec?.day || new Date(defaultHeatmapDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }))
-    : '';
+  const defaultHeatmapDay = defaultHeatmapDate ? (defaultHeatmapRec?.day || new Date(defaultHeatmapDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })) : '';
   const defaultHeatmapStatus = defaultHeatmapRec ? defaultHeatmapRec.status : (defaultHeatmapDate ? 'None' : '');
   const recentActivity = filteredProfileRecs.slice().reverse().slice(0, 10);
 
@@ -1574,10 +1658,7 @@ function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
     return `
       <div class="ring-card ${extraClass}">
         <div class="ring-svg-wrap">
-          <svg class="ring-svg" viewBox="0 0 64 64" aria-hidden="true">
-            <circle class="ring-bg" cx="32" cy="32" r="28" />
-            <circle class="ring-fg" cx="32" cy="32" r="28" style="stroke-dasharray: ${circ}; stroke-dashoffset: ${circ}; stroke: ${color}" />
-          </svg>
+          <svg class="ring-svg" viewBox="0 0 64 64"><circle class="ring-bg" cx="32" cy="32" r="28" /><circle class="ring-fg" cx="32" cy="32" r="28" style="stroke-dasharray:${circ}; stroke-dashoffset:${circ}; stroke:${color}" /></svg>
           <span class="ring-val">${pct}%</span>
         </div>
         <span class="ring-lbl">${lbl}</span>
@@ -1585,167 +1666,69 @@ function showEmpProfile(uid, filter = 'all', preserveScroll = false) {
     `;
   };
 
-  const statusBdg = s => {
-    const m = { Present: 'success', Late: 'warning', Absent: 'danger', 'System Error': 'glass' };
-    return `<span class="badge pills-${m[s] || 'glass'}">${s}</span>`;
-  };
-
   content.innerHTML = `
     <div class="profile-hero">
       <div class="hero-avatar" style="background:${avatarCol(name)}">${initials(name)}</div>
-      <div class="hero-info">
-        <h2>
-          <span>${name}</span>
-          ${genSpark(profileRecs)}
-        </h2>
-        <p class="hero-meta">
-          ${heroMeta.map(part => `<span>${part}</span>`).join('<span class="hero-meta-sep">&bull;</span>')}
-        </p>
-        <p>ID ${uid} • ${dept} • ${branch}</p>
-      </div>
+      <div class="hero-info"><h2><span>${name}</span>${genSpark(profileRecs)}</h2><p>ID ${uid} • ${dept} • ${branch}</p></div>
     </div>
-
-    <div class="ring-grid">
-      ${ring(attPct, 'Stability', 'var(--teal)')}
-      ${ring(100 - latePct, 'Punctuality', 'var(--blue)')}
-      <div class="ring-card ring-card-wide">
-        <div class="ring-svg-wrap">
-          <span class="ring-stat-value">${otHours}h</span>
-        </div>
-        <span class="ring-lbl">Overtime</span>
-      </div>
-    </div>
-
-    <div class="dna-capsule">
-      <div class="dna-item">
-        <span class="dna-lbl">Shift DNA: Usual In</span>
-        <span class="dna-val">${avgInStr}</span>
-      </div>
-      <div class="dna-item">
-        <span class="dna-lbl">Engagement</span>
-        <span class="dna-val">${attPct > 80 ? 'High' : attPct > 50 ? 'Moderate' : 'Low'}</span>
-      </div>
-    </div>
-
+    <div class="ring-grid">${ring(attPct, 'Stability', 'var(--teal)')}${ring(100 - latePct, 'Punctuality', 'var(--blue)')}<div class="ring-card ring-card-wide"><div class="ring-svg-wrap"><span class="ring-stat-value">${otHours}h</span></div><span class="ring-lbl">Overtime</span></div></div>
+    <div class="dna-capsule"><div class="dna-item"><span class="dna-lbl">Shift DNA: Usual In</span><span class="dna-val">${avgInStr}</span></div><div class="dna-item"><span class="dna-lbl">Engagement</span><span class="dna-val">${attPct > 80 ? 'High' : 'Moderate'}</span></div></div>
     <div class="summary-mini-grid">
-      <button class="summary-mini-card profile-action-card${filterMeta.key === 'all' ? ' active' : ''}" type="button" onclick="setProfileFilter('all')">
-        <span class="summary-mini-lbl">Records</span>
-        <strong class="summary-mini-val">${totalRecords}</strong>
-      </button>
-      <button class="summary-mini-card profile-action-card${filterMeta.key === 'attended' ? ' active' : ''}" type="button" onclick="setProfileFilter('attended')">
-        <span class="summary-mini-lbl">Present Days</span>
-        <strong class="summary-mini-val">${presentRecs.length}</strong>
-      </button>
-      <div class="summary-mini-card">
-        <span class="summary-mini-lbl">Avg Hours</span>
-        <strong class="summary-mini-val">${avgHours}h</strong>
-      </div>
-      <button class="summary-mini-card profile-action-card${filterMeta.key === 'exceptions' ? ' active' : ''}" type="button" onclick="setProfileFilter('exceptions')">
-        <span class="summary-mini-lbl">Exceptions</span>
-        <strong class="summary-mini-val">${exceptionCount}</strong>
-      </button>
+      <button class="summary-mini-card profile-action-card${filterMeta.key === 'all' ? ' active' : ''}" type="button" onclick="setProfileFilter('all')"><span class="summary-mini-lbl">Records</span><strong class="summary-mini-val">${totalRecords}</strong></button>
+      <button class="summary-mini-card card-teal profile-action-card${filterMeta.key === 'attended' ? ' active' : ''}" type="button" onclick="setProfileFilter('attended')"><span class="summary-mini-lbl">Present Days</span><strong class="summary-mini-val">${presentRecs.length}</strong></button>
+      <button class="summary-mini-card card-violet profile-action-card${filterMeta.key === 'status:Holiday' ? ' active' : ''}" type="button" onclick="setProfileFilter('status:Holiday')"><span class="summary-mini-lbl">Holidays</span><strong class="summary-mini-val">${statusCounts['Holiday']}</strong></button>
+      <button class="summary-mini-card card-slate profile-action-card${filterMeta.key === 'status:Week Off' ? ' active' : ''}" type="button" onclick="setProfileFilter('status:Week Off')"><span class="summary-mini-lbl">Week Off</span><strong class="summary-mini-val">${statusCounts['Week Off']}</strong></button>
+      <button class="summary-mini-card card-amber profile-action-card${filterMeta.key === 'status:Late' ? ' active' : ''}" type="button" onclick="setProfileFilter('status:Late')"><span class="summary-mini-lbl">Late Days</span><strong class="summary-mini-val">${statusCounts['Late']}</strong></button>
+      <div class="summary-mini-card"><span class="summary-mini-lbl">Avg Hours</span><strong class="summary-mini-val">${avgHours}h</strong></div>
+      <button class="summary-mini-card card-red profile-action-card${filterMeta.key === 'exceptions' ? ' active' : ''}" type="button" onclick="setProfileFilter('exceptions')"><span class="summary-mini-lbl">Exceptions</span><strong class="summary-mini-val">${exceptionCount}</strong></button>
     </div>
-
-    <div class="section-head">Status Breakdown</div>
-    <div class="status-breakdown">
-      ${statusOrder.map(status => `
-        <button class="status-count-card profile-action-card${filterMeta.key === `status:${status}` ? ' active' : ''}" type="button" data-status="${status}" onclick="setProfileFilter('status:${status.replace(/'/g, "\\'")}')">
-          <span class="status-count-label">${status}</span>
-          <strong class="status-count-value">${statusCounts[status]}</strong>
-        </button>
-      `).join('')}
-    </div>
-
-    <div class="profile-section-tools">
-      <span class="profile-filter-note">${filterMeta.key === 'all' ? 'Tap the cards above to focus the history and recent activity.' : `Showing ${filterMeta.label}`}</span>
-      ${filterMeta.key === 'all' ? '' : '<button class="profile-filter-clear" type="button" onclick="setProfileFilter(\'all\')">Show all</button>'}
-    </div>
-
     <div class="section-head">Attendance History</div>
-    <div class="heatmap-wrap">
-      <div class="heatmap-week-list">
-        ${weekRows.map(week => `
-          <div class="heatmap-week-row">
-            <div class="heatmap-week-label">${formatHeatmapRange(week[0], week[week.length - 1])}</div>
-            <div class="heatmap-grid heatmap-row-grid" style="grid-template-columns: repeat(${week.length}, 1fr)">
-              ${week.map(d => {
+    <div class="heatmap-legend">
+      <div class="legend-item"><div class="legend-dot p"></div>Present</div>
+      <div class="legend-item"><div class="legend-dot l"></div>Late</div>
+      <div class="legend-item"><div class="legend-dot a"></div>Absent</div>
+      <div class="legend-item"><div class="legend-dot h"></div>Holiday</div>
+      <div class="legend-item"><div class="legend-dot w"></div>Week Off</div>
+      <div class="legend-item"><div class="legend-dot s"></div>System Error</div>
+      <div class="legend-item"><div class="legend-dot n"></div>No Data</div>
+    </div>
+    <div class="heatmap-wrap"><div class="heatmap-week-list">${weekRows.map(week => `<div class="heatmap-week-row"><div class="heatmap-week-label">${formatHeatmapRange(week[0], week[week.length - 1])}</div><div class="heatmap-grid heatmap-row-grid" style="grid-template-columns:repeat(${week.length},1fr)">${week.map(d => {
     const dayRec = profileRecs.find(x => x.date === d);
     const status = dayRec ? dayRec.status : 'None';
     const day = dayRec?.day || new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-    const isActive = d === defaultHeatmapDate ? ' active' : '';
-    const isMuted = filterMeta.key !== 'all' && (!dayRec || !filterMeta.match(dayRec)) ? ' is-muted' : '';
-    return `<div class="hm-box${isActive}${isMuted}" data-status="${status}" data-date="${d}" data-day="${day}" title="${d}: ${status}" role="button" tabindex="0" onclick="selectHeatmapDay(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHeatmapDay(this)}"></div>`;
-  }).join('')}
-            </div>
-          </div>
-        `).join('')}
-      </div>
-      <div id="heatmap-detail" class="heatmap-detail">
-        ${defaultHeatmapDate
-      ? `<div class="heatmap-detail-date">${defaultHeatmapDate} <span>${defaultHeatmapDay}</span></div><div class="heatmap-detail-status">${defaultHeatmapStatus}</div>`
-      : `<div class="heatmap-detail-date">No ${filterMeta.label.toLowerCase()} in this range</div><div class="heatmap-detail-status">Try another card</div>`}
-      </div>
-    </div>
-
-    <div class="legend-row">
-      <div class="leg-item"><div class="leg-dot" style="background:var(--teal)"></div> Present</div>
-      <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div> Late</div>
-      <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div> Absent</div>
-      <div class="leg-item"><div class="leg-dot" style="background:var(--slate)"></div> Off</div>
-      <div class="leg-item"><div class="leg-dot" style="background:var(--violet)"></div> Holiday</div>
-    </div>
-
+    return `<div class="hm-box${d === defaultHeatmapDate ? ' active' : ''}${filterMeta.key !== 'all' && (!dayRec || !filterMeta.match(dayRec)) ? ' is-muted' : ''}" data-status="${status}" data-date="${d}" data-day="${day}" onclick="selectHeatmapDay(this)"></div>`;
+  }).join('')}</div></div>`).join('')}</div><div id="heatmap-detail" class="heatmap-detail">${defaultHeatmapDate ? `<div class="heatmap-detail-date">${defaultHeatmapDate} <span>${defaultHeatmapDay}</span></div><div class="heatmap-detail-status">${defaultHeatmapStatus}</div>` : ''}</div></div>
     <div class="section-head">Recent activity</div>
-    <div class="timeline-wrap">
-      ${recentActivity.length ? recentActivity.map(x => {
-        let ico = '';
-        if (x.status === 'Late') ico = '<span class="glow-ico glow-warn">⏰</span>';
-        if (x.status === 'System Error') ico = '<span class="glow-ico glow-sys">⚙️</span>';
-        if (x.status === 'Missed Punch') ico = '<span class="glow-ico glow-err">⚠️</span>';
-        return `
-        <div class="tl-item">
-          <div class="tl-date">
-            <span>${x.date.split('-').slice(1).reverse().join('/')}</span>
-            <small style="display:block; font-size:0.6rem; color:var(--ink-faint)">${x.day}</small>
-          </div>
-          <div class="tl-shift">
-            <span style="display:block">${x.firstIn || '--'} → ${x.lastOut || '--'}</span>
-            <small>${x.shiftDisplay}</small>
-          </div>
-          <div class="tl-res">
-             ${ico}
-             ${statusBdg(x.status)}
-          </div>
-        </div>
-      `}).join('') : `<div class="profile-empty-state">No ${filterMeta.label.toLowerCase()} found in the selected range.</div>`}
-    </div>
+    <div class="timeline-wrap">${recentActivity.length ? recentActivity.map(x => `<div class="tl-item"><div class="tl-date"><span>${x.date.split('-').slice(1).reverse().join('/')}</span><small>${x.day}</small></div><div class="tl-shift">${x.firstIn || '--'} → ${x.lastOut || '--'}<small>${x.shiftDisplay}</small></div><div class="tl-res"><span class="badge pills-glass">${x.status}</span></div></div>`).join('') : ''}</div>
+    <button class="btn btn-primary" onclick="window.filterByEmployeeGlobal('${uid}')" style="margin-top:20px; width:100%">View All History</button>
   `;
-
-  if (sidebarBody) sidebarBody.scrollTop = preserveScroll ? savedScroll : 0;
-
+  if (sidebarBody) sidebarBody.scrollTop = savedScroll;
   overlay.style.display = 'block';
-  if (wasOpen) {
-    overlay.classList.add('open');
-    sidebar.classList.add('open');
-    animateProfileRings(content, 60);
-    return;
-  }
-
-  setTimeout(() => {
-    overlay.classList.add('open');
-    sidebar.classList.add('open');
-    animateProfileRings(content, 600);
-  }, 10);
+  setTimeout(() => { overlay.classList.add('open'); sidebar.classList.add('open'); animateProfileRings(content, 600); }, 10);
 }
 
 function filterByBranch(branch) {
-  const menu = document.getElementById('f-branch');
-  if (!menu) return;
-  const checkboxes = menu.querySelectorAll('input[type="checkbox"]');
-  checkboxes.forEach(cb => cb.checked = (cb.value === branch));
-
-  // Switch back to Daily tab
+  setSelectedValues('f-branch', [branch]);
   switchTab('daily', document.querySelector('.tab[onclick*="daily"]'));
   applyFilters();
-  showToast(`Filtering by Branch: ${branch}`);
 }
+
+window.showEmpProfile = showEmpProfile;
+window.filterByEmployeeGlobal = function (uid) {
+  const overlay = document.getElementById('sidebar-overlay');
+  const sidebar = document.getElementById('emp-sidebar');
+  if (overlay) overlay.classList.remove('open');
+  if (sidebar) sidebar.classList.remove('open');
+  setTimeout(() => overlay.style.display = 'none', 300);
+  switchTab('daily', document.querySelector('.tab[onclick*="daily"]'));
+  setSelectedValues('f-emp', [uid]);
+  applyFilters();
+};
+window.closeSidebar = function () {
+  const sidebar = document.getElementById('emp-sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) { overlay.classList.remove('open'); setTimeout(() => overlay.style.display = 'none', 300); }
+};
+
+initApp();

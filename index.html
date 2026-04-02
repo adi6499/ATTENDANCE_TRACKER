@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Smart Attendance System</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="script.js" defer></script>
 </head>
 
@@ -297,7 +297,24 @@
               <div class="shortcut-grp">
                 <button class="btn-s" type="button" onclick="setDateRange('7d')">7D</button>
                 <button class="btn-s" type="button" onclick="setDateRange('30d')">30D</button>
-                <button class="btn-s" type="button" onclick="setDateRange('month')">Month</button>
+                <select id="month-picker" class="sel-s" onchange="jumpToDateContext()">
+                  <option value="" disabled selected>Month</option>
+                  <option value="0">January</option>
+                  <option value="1">February</option>
+                  <option value="2">March</option>
+                  <option value="3">April</option>
+                  <option value="4">May</option>
+                  <option value="5">June</option>
+                  <option value="6">July</option>
+                  <option value="7">August</option>
+                  <option value="8">September</option>
+                  <option value="9">October</option>
+                  <option value="10">November</option>
+                  <option value="11">December</option>
+                </select>
+                <select id="year-picker" class="sel-s" onchange="jumpToDateContext()">
+                  <option value="" disabled selected>Year</option>
+                </select>
                 <button class="btn-s" type="button" onclick="setDateRange('clear')">Reset</button>
               </div>
               <div class="search-mini">
@@ -410,19 +427,18 @@
     </section>
 
     <section id="tab-summary" class="panel shell" style="display:none">
-      <div class="panel-head">
-        <h2>Employee Summary</h2>
+      <div class="panel-head summary-panel-head">
+        <h2>Executive Briefing Dashboard</h2>
         <div class="search-wrap">
           <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="11" cy="11" r="6"></circle>
             <path d="m20 20-4.35-4.35"></path>
           </svg>
-          <input id="search-summary" class="search-inp" type="search" placeholder="Search summary cards"
+          <input id="search-summary" class="search-inp" type="search" placeholder="Search profiles and departments..."
             oninput="renderSummary()">
         </div>
       </div>
-      <div id="summary-leaderboard" class="summary-leaderboard"></div>
-      <div id="summary-grid" class="summary-grid"></div>
+      <div id="summary-content" class="anim-fade"></div>
     </section>
 
     <section id="tab-late" class="panel shell" style="display:none">
