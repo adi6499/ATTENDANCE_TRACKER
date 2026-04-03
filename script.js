@@ -1,34 +1,66 @@
+/* ═══════════════════════════════════════════════════════════════
+   SMART ATTENDANCE SYSTEM v2.0 — Production-Grade Architecture
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── STRUCTURED APPLICATION STATE ──
+const AppState = {
+  raw: { excelFiles: [], datFiles: [], holidayFiles: [], shiftMap: {} },
+  processed: {
+    records: [], filtered: [],
+    lateRecs: [], absentRecs: [], earlyRecs: [],
+    dataReliability: 100
+  },
+  config: {
+    holidays: [],
+    failureDates: [],
+    version: 'v5'
+  },
+  ui: {
+    sortCol: 'date', sortDir: 1,
+    page: 1, perPage: 100,
+    quickFilter: '',
+    mobileFiltersOpen: false,
+    activeProfile: { uid: '', filter: 'all' }
+  },
+  validation: { warnings: [], duplicateUids: [] }
+};
+
+// Legacy compatibility — all old S.xxx references map here
 window.S = {
-  excelFiles: [], datFiles: [], shiftMap: {},
-  records: [], filtered: [],
-  sortCol: 'date', sortDir: 1,
-  page: 1, perPage: 100,
-  lateRecs: [], absentRecs: [], earlyRecs: [],
-  quickFilter: '',
-  mobileFiltersOpen: false,
-  activeProfile: { uid: '', filter: 'all' },
-  holidays: [
-    { name: "Makarsankranti", d: "2026-01-14", b: ["Gujarat"] },
-    { name: "Republic Day", d: "2026-01-26", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Rang Panchami", d: "2026-03-03", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Gudi Padwa", d: "2026-03-19", b: ["Mumbai", "Borivali", "Nagpur"] },
-    { name: "Maharashtra/Gujarat Day", d: "2026-05-01", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
-    { name: "Independence Day", d: "2026-08-15", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Rakshabandhan", d: "2026-08-28", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
-    { name: "Gokulashtami", d: "2026-09-04", b: ["Mumbai", "Borivali", "Nagpur"] },
-    { name: "Ganesh Chaturthi", d: "2026-09-14", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Anant Chaturthi", d: "2026-09-25", b: ["Mumbai", "Borivali", "Nagpur"] },
-    { name: "Gandhi Jayanti", d: "2026-10-02", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Dussehra", d: "2026-10-20", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Narak Chaturdashi/Laxmi Pujan", d: "2026-11-08", b: ["Mumbai", "Borivali", "Gujarat"] },
-    { name: "Diwali", d: "2026-11-09", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat", "Goa"] },
-    { name: "Gujarati New Year / Padwa", d: "2026-11-10", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
-    { name: "Bhai Duj", d: "2026-11-11", b: ["Mumbai", "Borivali", "Nagpur", "Gujarat"] },
-    { name: "Diwali Holidays", d: "2026-11-12", d2: "2026-11-14", b: ["Gujarat"] },
-    { name: "Goa Liberation Day", d: "2026-12-19", b: ["Goa"] },
-    { name: "Christmas", d: "2026-12-25", b: ["Goa"] }
-  ],
-  failureDates: []
+  get excelFiles() { return AppState.raw.excelFiles; },
+  set excelFiles(v) { AppState.raw.excelFiles = v; },
+  get datFiles() { return AppState.raw.datFiles; },
+  set datFiles(v) { AppState.raw.datFiles = v; },
+  get shiftMap() { return AppState.raw.shiftMap; },
+  set shiftMap(v) { AppState.raw.shiftMap = v; },
+  get records() { return AppState.processed.records; },
+  set records(v) { AppState.processed.records = v; },
+  get filtered() { return AppState.processed.filtered; },
+  set filtered(v) { AppState.processed.filtered = v; },
+  get lateRecs() { return AppState.processed.lateRecs; },
+  set lateRecs(v) { AppState.processed.lateRecs = v; },
+  get absentRecs() { return AppState.processed.absentRecs; },
+  set absentRecs(v) { AppState.processed.absentRecs = v; },
+  get earlyRecs() { return AppState.processed.earlyRecs; },
+  set earlyRecs(v) { AppState.processed.earlyRecs = v; },
+  get sortCol() { return AppState.ui.sortCol; },
+  set sortCol(v) { AppState.ui.sortCol = v; },
+  get sortDir() { return AppState.ui.sortDir; },
+  set sortDir(v) { AppState.ui.sortDir = v; },
+  get page() { return AppState.ui.page; },
+  set page(v) { AppState.ui.page = v; },
+  get perPage() { return AppState.ui.perPage; },
+  set perPage(v) { AppState.ui.perPage = v; },
+  get quickFilter() { return AppState.ui.quickFilter; },
+  set quickFilter(v) { AppState.ui.quickFilter = v; },
+  get mobileFiltersOpen() { return AppState.ui.mobileFiltersOpen; },
+  set mobileFiltersOpen(v) { AppState.ui.mobileFiltersOpen = v; },
+  get activeProfile() { return AppState.ui.activeProfile; },
+  set activeProfile(v) { AppState.ui.activeProfile = v; },
+  get holidays() { return AppState.config.holidays; },
+  set holidays(v) { AppState.config.holidays = v; },
+  get failureDates() { return AppState.config.failureDates; },
+  set failureDates(v) { AppState.config.failureDates = v; }
 };
 
 const FILTER_CONFIG = {
@@ -40,19 +72,342 @@ const FILTER_CONFIG = {
 
 const STATUS_OPTIONS = ['Present', 'Late', 'Late (Comp)', 'Half Day', 'Missed Punch', 'Absent', 'Holiday', 'Week Off', 'System Error'];
 const THEMES = [
-  { id: 'light', label: 'Light' },
-  { id: 'obsidian', label: 'Obsidian' },
-  { id: 'midnight', label: 'Midnight' },
-  { id: 'sapphire', label: 'Sapphire' }
+  { id: 'light', label: '☀️ Light' },
+  { id: 'obsidian', label: '🌑 Obsidian' },
+  { id: 'midnight', label: '🌙 Midnight' },
+  { id: 'sapphire', label: '💎 Sapphire' },
+  { id: 'paper', label: '📄 Paper' }
 ];
 const STORAGE_KEYS = {
-  records: 'hr_att_v4',
-  ui: 'hr_att_ui_v2'
+  records: 'hr_att_v5',
+  ui: 'hr_att_ui_v3',
+  holidays: 'hr_att_holidays_v1',
+  config: 'hr_att_config_v1'
 };
 const LEGACY_STORAGE_KEYS = {
-  records: ['hr_att_v3'],
-  ui: ['hr_att_ui_v1']
+  records: ['hr_att_v3', 'hr_att_v4'],
+  ui: ['hr_att_ui_v1', 'hr_att_ui_v2']
 };
+
+// ── EMPLOYEE KEY: uid + branch to avoid cross-branch collisions ──
+function makeEmployeeKey(uid, branch) {
+  return uid + '_' + (branch || '').replace(/\s+/g, '_').toLowerCase();
+}
+
+// ── DATA NORMALIZATION HUB ──
+const DataNormalizer = {
+  date: (v) => {
+    if (!v || v === 'NULL') return null;
+    if (v instanceof Date) {
+      if (isNaN(v.getTime())) return null;
+      return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+    }
+    const s = String(v).trim();
+    if (!s || s === 'NULL' || s === '--' || s === '-') return null;
+
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+    // Handle DD-Mon-YYYY or DD-Mon-YY
+    const dmy = s.match(/^(\d{1,2})[\/\-]([A-Za-z]+)[\/\-](\d{2,4})$/);
+    if (dmy) {
+      const months = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+      };
+      const mo = months[dmy[2].toLowerCase().slice(0, 3)];
+      if (mo) {
+        let yr = parseInt(dmy[3]);
+        if (yr < 100) yr += 2000;
+        return `${yr}-${String(mo).padStart(2, '0')}-${String(parseInt(dmy[1])).padStart(2, '0')}`;
+      }
+    }
+
+    // Handle DD/MM/YYYY or DD/MM/YY
+    const dmy2 = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (dmy2) {
+      let yr = parseInt(dmy2[3]);
+      if (yr < 100) yr += 2000;
+      return `${yr}-${String(parseInt(dmy2[2])).padStart(2, '0')}-${String(parseInt(dmy2[1])).padStart(2, '0')}`;
+    }
+
+    return null;
+  },
+
+  time: (v) => {
+    if (v == null || v === '' || v === '--') return null;
+    if (v instanceof Date) return v.getHours() * 60 + v.getMinutes();
+    if (typeof v === 'number') return Math.round(v * 24 * 60);
+    const m = String(v).match(/(\d+):(\d+)/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
+  },
+
+  branch: (raw) => {
+    if (!raw) return '';
+    return String(raw)
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z]+\s*-\s*/i, '')  // Remove prefixes like 'JISPL - '
+      .replace(/\s+/g, ' ')
+      .trim();
+  },
+
+  holidayValue: (raw) => {
+    const val = String(raw || '').trim().toLowerCase();
+    if (!val || val === 'null' || val === '--' || val === '') return null;
+    if (val.includes('holiday') || ['y', 'yes', '1', 'x', '✓', 'ph'].includes(val)) return 'holiday';
+    return null;
+  }
+};
+
+// Legacy alias for compatibility during refactor
+function normalizeBranch(raw) {
+  return DataNormalizer.branch(raw);
+}
+
+// ── HOLIDAY SYSTEM ──
+function isHoliday(date, branch) {
+  const holidays = AppState.config.holidays;
+  if (!holidays.length) return null;
+
+  // STRICT: missing or blank branch = no holiday (prevents global spread via empty string match)
+  const empBranch = normalizeBranch(branch);
+  if (!empBranch || empBranch === '--') return null;
+
+  const match = holidays.find(h => {
+    // Date range check first (applies to both global and branch-specific)
+    const dateMatch = h.d2 ? (date >= h.d && date <= h.d2) : (date === h.d);
+    if (!dateMatch) return false;
+
+    // __global__ sentinel: holiday has no specific branch column → applies to ALL branches
+    if (h.b.includes('__global__')) return true;
+
+    // STRICT branch match: normalize both sides, both must be non-empty
+    return h.b.some(b => {
+      const hBranch = normalizeBranch(b);
+      if (!hBranch) return false;
+      return empBranch.includes(hBranch) || hBranch.includes(empBranch);
+    });
+  }) || null;
+
+  if (match) {
+    console.log(`[Holiday Match] ${date} "${branch}"("${empBranch}") → "${match.name}"`);
+  }
+  return match;
+}
+
+function loadHolidays() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.holidays);
+    if (raw) {
+      AppState.config.holidays = JSON.parse(raw);
+      updateHolidayStatus();
+    }
+  } catch (e) { console.warn('Failed to load holidays', e); }
+}
+
+function persistHolidays() {
+  if (AppState.config.holidays.length) {
+    localStorage.setItem(STORAGE_KEYS.holidays, JSON.stringify(AppState.config.holidays));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.holidays);
+  }
+  updateHolidayStatus();
+}
+
+function clearHolidayData() {
+  if (!confirm('Clear all holiday data?')) return;
+  AppState.config.holidays = [];
+  AppState.raw.holidayFiles = [];
+  persistHolidays();
+  renderPills('holiday');
+  showToast('Holiday data cleared.');
+}
+
+function updateHolidayStatus() {
+  const el = document.getElementById('holiday-status');
+  if (!el) return;
+  const count = AppState.config.holidays.length;
+  el.innerHTML = count
+    ? `<span class="holiday-loaded">✓ ${count} holidays loaded</span>`
+    : '<span class="holiday-empty">No holidays loaded</span>';
+  const clearBtn = document.getElementById('btn-clear-holidays');
+  if (clearBtn) clearBtn.style.display = count ? 'inline-flex' : 'none';
+}
+
+async function parseHolidaySheet(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        // Read with cellDates:true to get proper Date objects for Excel date serials
+        const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
+        if (rows.length < 2) { res([]); return; }
+
+        const hdr = rows[0].map(c => String(c || '').trim().toLowerCase());
+
+        // Column detection — name col must NOT be the holiday-value columns
+        // "Name of Holiday" → col 0, "Day" → col 1, "Date" → col 2, branches → col 3+
+        const nameCol = hdr.findIndex(h => h.includes('name'));
+        const dateCol = hdr.findIndex(h => h.includes('date') && !h.includes('end'));
+        const endDateCol = hdr.findIndex(h => h.includes('end') && h.includes('date'));
+
+        // Branch columns: any column NOT name/day/date whose header is a known location
+        // or just any remaining column after the date column
+        const knownBranches = ['mumbai', 'borivali', 'nagpur', 'gujarat', 'goa',
+          'delhi', 'pune', 'chennai', 'hyderabad', 'bangalore'];
+        const skipCols = new Set([nameCol, dateCol, endDateCol].filter(c => c >= 0));
+        // Also skip "day" column
+        hdr.forEach((h, i) => { if (h === 'day') skipCols.add(i); });
+
+        const branchCols = [];
+        hdr.forEach((h, i) => {
+          if (skipCols.has(i)) return;
+          if (!h) return;
+          branchCols.push({ idx: i, name: h }); // keep all remaining columns as branch columns
+        });
+
+        console.log('[parseHolidaySheet] Headers:', hdr);
+        console.log('[parseHolidaySheet] nameCol:', nameCol, 'dateCol:', dateCol, 'branchCols:', branchCols.map(b => b.name));
+
+        // Date parser — handles all formats found in this file:
+        // - "19-Mar-2026"   (string with month abbreviation)
+        // - "14-Jan-2026"
+        // - "2026-03-03 00:00:00"  (datetime string from Excel)
+        // - Excel serial number (handled by cellDates:true above, becomes formatted string)
+        // Use unified DataNormalizer
+        const parseDate = (v) => DataNormalizer.date(v);
+
+        let invalidDates = 0;
+        let skippedRows = 0;
+
+        const holidays = [];
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const rawDate = row[dateCol >= 0 ? dateCol : 2];
+          const dateStr = parseDate(rawDate);
+
+          if (!dateStr && rawDate) invalidDates++;
+          if (!dateStr) continue;
+
+          const endStr = endDateCol >= 0 ? parseDate(row[endDateCol]) : null;
+          const name = nameCol >= 0 ? String(row[nameCol] || '').trim() : 'Holiday';
+          if (!name) continue;
+
+          // Branch detection
+          const branches = [];
+          branchCols.forEach(bc => {
+            if (DataNormalizer.holidayValue(row[bc.idx]) === 'holiday') {
+              branches.push(DataNormalizer.branch(bc.name));
+            }
+          });
+
+          // Skip row if no branches are marked
+          if (!branches.length) {
+            skippedRows++;
+            console.log(`[parseHolidaySheet] Skipping "${name}" (${dateStr}) — no branches marked.`);
+            continue;
+          }
+
+          const holiday = { name, d: dateStr, b: branches };
+          if (endStr && endStr !== dateStr) holiday.d2 = endStr;
+          holidays.push(holiday);
+        }
+
+        if (invalidDates > 0) AppState.validation.warnings.push(`ℹ ${invalidDates} unrecognized dates in holiday sheet (skipped).`);
+        if (skippedRows > 0) AppState.validation.warnings.push(`ℹ ${skippedRows} holidays skipped due to missing branch markings (does not impact summary).`);
+
+
+        console.log(`[parseHolidaySheet] Total holidays parsed: ${holidays.length}`);
+        res(holidays);
+      } catch (err) {
+        console.error('[parseHolidaySheet] Error:', err);
+        rej(err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ── VALIDATION LAYER ──
+function runValidation(shiftMap, punches) {
+  const warnings = AppState.validation.warnings || [];
+  const uidBranches = {};
+
+  // Detect duplicate UIDs across branches
+  Object.entries(shiftMap).forEach(([uid, info]) => {
+    if (!uidBranches[uid]) uidBranches[uid] = new Set();
+    if (info.branch) uidBranches[uid].add(info.branch);
+  });
+  const duplicateUids = [];
+  Object.entries(uidBranches).forEach(([uid, branches]) => {
+    if (branches.size > 1) {
+      duplicateUids.push({ uid, branches: [...branches] });
+      warnings.push(`ℹ User ${uid} exists in multiple branches: ${[...branches].join(', ')} (first match used).`);
+    }
+  });
+
+  // Detect unknown IDs in DAT logs
+  const shiftUids = new Set(Object.keys(shiftMap));
+  const datUids = new Set(punches.map(p => p.uid));
+  const unknownIds = [...datUids].filter(uid => !shiftUids.has(uid));
+  if (unknownIds.length > 0) {
+    warnings.push(`ℹ ${unknownIds.length} unrecognized ID(s) in logs ignored (does not impact core results). ${unknownIds.slice(0, 5).join(', ')}${unknownIds.length > 5 ? '...' : ''}`);
+  }
+
+  // Detect employees in shift master with no punches
+  const missingPunches = [...shiftUids].filter(uid => !datUids.has(uid));
+  if (missingPunches.length > 0) {
+    warnings.push(`ℹ ${missingPunches.length} employee(s) in Shift Master with no attendance logs.`);
+  }
+
+  // Already checking missing branches in parseShift, no need to duplicate here
+
+  AppState.validation = { warnings, duplicateUids };
+  renderValidationCenter(warnings);
+  return warnings;
+}
+
+function renderValidationCenter(warnings) {
+  const el = document.getElementById('validation-center');
+  const countEl = document.getElementById('vc-count');
+  const listEl = document.getElementById('vc-list');
+  if (!el || !countEl || !listEl) return;
+
+  if (!warnings || warnings.length === 0) {
+    el.style.display = 'none';
+    return;
+  }
+
+  countEl.textContent = warnings.length;
+  listEl.innerHTML = warnings.map(w => `<li>${w}</li>`).join('');
+  el.style.display = 'flex';
+}
+
+function toggleValidationCenter() {
+  const body = document.getElementById('vc-body');
+  const chev = document.getElementById('vc-chevron');
+  if (!body || !chev) return;
+
+  if (body.classList.contains('collapsed')) {
+    body.classList.remove('collapsed');
+    body.style.display = 'block';
+    chev.classList.add('vc-chevron-up');
+  } else {
+    body.classList.add('collapsed');
+    body.style.display = 'none';
+    chev.classList.remove('vc-chevron-up');
+  }
+}
+
+function dismissValidation(e) {
+  if (e) e.stopPropagation();
+  const el = document.getElementById('validation-center');
+  if (el) el.style.display = 'none';
+}
+
 const MOBILE_FILTER_BREAKPOINT = 720;
 const layoutObservers = [];
 
@@ -202,26 +557,53 @@ function hasLateArrival(record) {
 }
 
 function getWorkedMinutesFromPunches(punches) {
-  if (!Array.isArray(punches) || punches.length < 2) return 0;
+  if (!Array.isArray(punches) || punches.length < 2) return { mins: 0, isOdd: punches?.length === 1 };
 
-  // Sum complete in/out pairs so lunch breaks or stray extra punches do not inflate hours worked.
+  const isOdd = punches.length % 2 !== 0;
   let total = 0;
-  for (let i = 0; i + 1 < punches.length; i += 2) {
-    total += Math.max(0, Math.round((punches[i + 1] - punches[i]) / 60000));
+
+  if (isOdd) {
+    // Fallback logic for odd punches: Last OUT - First IN
+    const first = punches[0];
+    const last = punches[punches.length - 1];
+    let grossMins = Math.max(0, Math.round((last - first) / 60000));
+
+    // Treat intermediate punches as breaks: 
+    // E.g. [p0, p1, p2] -> break = p2 - p1? No, p1 and p2 could be anything.
+    // If [p0, p1, p2, p3, p4] -> break1 = p2 - p1, break2 = p4 - p3.
+    let breakMins = 0;
+    for (let i = 1; i + 1 < punches.length - 1; i += 2) {
+      breakMins += Math.max(0, Math.round((punches[i + 1] - punches[i]) / 60000));
+    }
+
+    total = Math.max(0, grossMins - breakMins);
+  } else {
+    // Standard strict pairing
+    for (let i = 0; i + 1 < punches.length; i += 2) {
+      total += Math.max(0, Math.round((punches[i + 1] - punches[i]) / 60000));
+    }
   }
-  return total;
+
+  return { mins: total, isOdd };
 }
 
-function getOvertimeMinutes(shiftStart, shiftEnd, workedMins) {
+function getOvertimeMinutes(shiftStart, shiftEnd, workedMins, lateMins, earlyExitMins) {
   if (shiftStart === null || shiftEnd === null || (shiftStart === 0 && shiftEnd === 0)) return 0;
   const scheduledMins = getShiftDurationMinutes(shiftStart, shiftEnd);
-  return Math.max(0, Number(workedMins || 0) - scheduledMins);
+  // Corrected OT: effective work = worked - late penalty - early exit penalty
+  const effectiveWork = Math.max(0, Number(workedMins || 0) - Number(lateMins || 0) - Number(earlyExitMins || 0));
+  const rawOT = Math.max(0, effectiveWork - scheduledMins);
+  // Floor to nearest 30-minute block, minimum 30 min threshold
+  return rawOT >= 30 ? Math.floor(rawOT / 30) * 30 : 0;
 }
 
 function initApp() {
   window.closeSidebar();
   bindDatePickers();
   bindFilterMenus();
+
+  // Load holidays from localStorage
+  loadHolidays();
 
   const savedTheme = localStorage.getItem('theme') || 'obsidian';
   applyTheme(savedTheme);
@@ -266,7 +648,11 @@ function minsToTime(m) { if (m === null) return '--'; const h = Math.floor(m / 6
 function applyTheme(themeId) {
   const theme = THEMES.find(t => t.id === themeId) || THEMES[0];
   document.documentElement.setAttribute('data-theme', theme.id);
-  document.getElementById('theme-btn-label').textContent = theme.label;
+  // Support both dropdown and button label
+  const selector = document.getElementById('theme-selector');
+  const label = document.getElementById('theme-btn-label');
+  if (selector) selector.value = theme.id;
+  if (label) label.textContent = theme.label;
   localStorage.setItem('theme', theme.id);
   syncAppMode();
   syncResponsiveUi();
@@ -303,7 +689,7 @@ function migrateStoredSession() {
   });
 
   if (hadLegacySession) {
-    showToast('Overtime rules were updated. Please regenerate the report from the source files.');
+    showToast('Data format updated (v5). Please regenerate reports from source files for best accuracy.');
   }
 }
 
@@ -506,27 +892,54 @@ function clearData() {
   if (!confirm('Clear all data and restart?')) return;
   localStorage.removeItem(STORAGE_KEYS.records);
   localStorage.removeItem(STORAGE_KEYS.ui);
+  // Note: Holiday data is preserved across sessions by default
   location.reload();
 }
 
-function handleFiles(files, type) {
-  (type === 'excel' ? S.excelFiles : S.datFiles).push(...files);
+async function handleFiles(files, type) {
+  const fileArr = Array.from(files);
+  if (type === 'holiday') {
+    AppState.raw.holidayFiles.push(...fileArr);
+    AppState.validation.warnings = []; // Reset validation state for new sheet
+
+    // Parse and merge holidays immediately
+    for (const f of fileArr) {
+      try {
+        const parsed = await parseHolidaySheet(f);
+        AppState.config.holidays.push(...parsed);
+      } catch (e) { console.error('Holiday parse error', e); }
+    }
+    persistHolidays();
+    renderPills('holiday');
+    renderValidationCenter(AppState.validation.warnings);
+    showToast(`${AppState.config.holidays.length} holidays loaded.`);
+    return;
+  }
+  (type === 'excel' ? S.excelFiles : S.datFiles).push(...fileArr);
   renderPills(type); checkReady();
 }
 function dzDrag(e, id) { e.preventDefault(); document.getElementById(id).classList.add('drag-over') }
 function dzLeave(id) { document.getElementById(id).classList.remove('drag-over') }
 function dzDrop(e, type) {
   e.preventDefault();
-  document.getElementById(type === 'excel' ? 'dz-excel' : 'dz-dat').classList.remove('drag-over');
+  const dzMap = { excel: 'dz-excel', dat: 'dz-dat', holiday: 'dz-holiday' };
+  const el = document.getElementById(dzMap[type]);
+  if (el) el.classList.remove('drag-over');
   handleFiles(e.dataTransfer.files, type);
 }
 function removeFile(type, idx) {
-  (type === 'excel' ? S.excelFiles : S.datFiles).splice(idx, 1);
+  if (type === 'holiday') {
+    AppState.raw.holidayFiles.splice(idx, 1);
+  } else {
+    (type === 'excel' ? S.excelFiles : S.datFiles).splice(idx, 1);
+  }
   renderPills(type); checkReady();
 }
 function renderPills(type) {
-  const arr = type === 'excel' ? S.excelFiles : S.datFiles;
-  document.getElementById('fl-' + type).innerHTML = arr.map((f, i) =>
+  const arr = type === 'excel' ? S.excelFiles : type === 'holiday' ? AppState.raw.holidayFiles : S.datFiles;
+  const el = document.getElementById('fl-' + type);
+  if (!el) return;
+  el.innerHTML = arr.map((f, i) =>
     `<div class="pill"><span>${f.name}</span><button class="pill-rm" onclick="removeFile('${type}',${i})">x</button></div>`
   ).join('');
 }
@@ -558,51 +971,85 @@ async function parseShift(file) {
         const map = {}; let hi = 0;
         for (let i = 0; i < Math.min(6, rows.length); i++) {
           const r2 = rows[i].map(c => String(c || '').toLowerCase());
-          if (r2.some(c => c.includes('userid') || c.includes('user id') || c.includes('emp'))) { hi = i; break }
+          if (r2.some(c => c.includes('userid') || c.includes('user id') || c.includes('emp'))) { hi = i; break; }
         }
         const hdr = rows[hi].map(c => String(c || '').toLowerCase().trim());
         const col = k => hdr.findIndex(h => h.includes(k));
+
         const idC = col('userid') !== -1 ? col('userid') : col('user') !== -1 ? col('user') : col('emp');
         const nmC = col('particular') !== -1 ? col('particular') : col('name');
-        const brC = col('branch'), dpC = col('department') !== -1 ? col('department') : col('dept');
+        const dpC = col('department') !== -1 ? col('department') : col('dept');
         const stC = col('shift start') !== -1 ? col('shift start') : col('start');
         const enC = col('shift end') !== -1 ? col('shift end') : col('end');
-        const toMins = v => {
-          if (v == null) return null;
-          if (v instanceof Date) return v.getHours() * 60 + v.getMinutes();
-          if (typeof v === 'number') return Math.round(v * 24 * 60);
-          const m = String(v).match(/(\d+):(\d+)/);
-          return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
-        };
+
+        // Branch column: try multiple common header variants
+        let brC = col('branch');
+        if (brC === -1) brC = col('site');
+        if (brC === -1) brC = col('location');
+        if (brC === -1) brC = col('office');
+        if (brC === -1) brC = col('division');
+        if (brC === -1) console.warn('[parseShift] No branch column found in Shift Master. Employees will have blank branch.');
+
+        let skippedRows = 0;
+        let missingBranch = 0;
+
         for (let i = hi + 1; i < rows.length; i++) {
-          const row = rows[i]; const uid = row[idC];
-          if (!uid && !row[nmC]) continue;
-          if (uid) map[String(uid).trim()] = {
-            name: row[nmC] ? String(row[nmC]).trim() : 'User ' + uid,
-            branch: row[brC] ? String(row[brC]).replace(/\s*-\s*/g, ' - ').replace(/\s+/g, ' ').trim() : '',
-            department: row[dpC] ? String(row[dpC]).trim() : '',
-            shiftStart: toMins(row[stC]), shiftEnd: toMins(row[enC])
-          };
+          const row = rows[i];
+          const uid = row[idC];
+          if (!uid && !row[nmC]) continue; // completely empty row
+
+          const uidStr = String(uid || '').trim();
+          if (!uidStr || uidStr === '--' || uidStr === '-') {
+            skippedRows++;
+            continue; // skip invalid rows
+          }
+
+          const branchVal = (brC >= 0 && row[brC]) ? DataNormalizer.branch(row[brC]) : '';
+          if (!branchVal) missingBranch++;
+
+          if (uidStr) {
+            map[uidStr] = {
+              name: row[nmC] ? String(row[nmC]).trim() : 'User ' + uidStr,
+              branch: branchVal,
+              department: row[dpC] ? String(row[dpC]).trim() : '',
+              shiftStart: DataNormalizer.time(row[stC]),
+              shiftEnd: DataNormalizer.time(row[enC])
+            };
+          }
         }
+
+        if (skippedRows > 0) AppState.validation.warnings.push(`ℹ ${skippedRows} malformed rows skipped in Shift Master (does not impact summary).`);
+        if (missingBranch > 0) AppState.validation.warnings.push(`ℹ ${missingBranch} employees missing valid branch mapping.`);
+
         res(map);
-      } catch (err) { rej(err) }
+      } catch (err) { rej(err); }
     };
     r.readAsArrayBuffer(file);
   });
 }
 
+
 async function parseDat(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = e => {
-      const lines = e.target.result.split(/\r?\n/); const ps = [];
+      const lines = e.target.result.split(/\r?\n/);
+      const ps = [];
+      let invalidDates = 0;
+
       for (const line of lines) {
         if (!line.trim()) continue;
         const pts = line.trim().split(/\s+/); if (pts.length < 2) continue;
         const ds = (pts[1] && pts[2] && !pts[1].includes(' ')) ? pts[1] + ' ' + pts[2] : pts[1];
         const d = new Date(ds);
-        if (!isNaN(d.getTime())) ps.push({ uid: String(pts[0]).trim(), dt: d });
+        if (!isNaN(d.getTime())) {
+          ps.push({ uid: String(pts[0]).trim(), dt: d });
+        } else {
+          invalidDates++;
+        }
       }
+
+      if (invalidDates > 0) AppState.validation.warnings.push(`ℹ ${invalidDates} unparseable timestamps skipped in ${file.name} (does not impact core summary).`);
       res(ps);
     };
     r.onerror = rej;
@@ -613,6 +1060,8 @@ async function parseDat(file) {
 async function generateReport() {
   document.getElementById('toast').style.display = 'none';
   document.getElementById('btn-gen').disabled = true;
+  AppState.validation.warnings = []; // Reset validation warnings on new run
+
   try {
     setProg(10, 'Reading shift master...');
     S.shiftMap = {};
@@ -621,7 +1070,31 @@ async function generateReport() {
     let punches = [];
     for (const f of S.datFiles) punches.push(...await parseDat(f));
     if (!punches.length) throw new Error('No valid punch records found in the uploaded files.');
-    setProg(55, 'Calculating attendance...');
+
+    // ── VALIDATION LAYER ──
+    setProg(40, 'Validating data...');
+    const warnings = runValidation(S.shiftMap, punches);
+    if (warnings.length) {
+      console.warn('Validation warnings:', warnings);
+      showToast(warnings[0]); // Show first warning
+    }
+
+    setProg(50, 'Deduplicating punches...');
+    // ── PUNCH DEDUPLICATION: Remove duplicates within 2-minute window ──
+    punches.sort((a, b) => (a.uid + a.dt.getTime()).localeCompare(b.uid + b.dt.getTime()) || a.dt - b.dt);
+    const dedupPunches = [];
+    let lastKey = '', lastTime = 0;
+    for (const p of punches) {
+      const key = p.uid;
+      const time = p.dt.getTime();
+      if (key === lastKey && Math.abs(time - lastTime) < 120000) continue; // 2-min window
+      dedupPunches.push(p);
+      lastKey = key;
+      lastTime = time;
+    }
+    punches = dedupPunches;
+
+    setProg(60, 'Calculating attendance...');
     const grouped = {};
     for (const p of punches) {
       const dk = p.dt.toISOString().split('T')[0];
@@ -632,7 +1105,7 @@ async function generateReport() {
     const allPunchedDates = punches.map(p => p.dt.getTime());
     let minD = new Date(Math.min(...allPunchedDates)), maxD = new Date(Math.max(...allPunchedDates));
 
-    // SAFETY GUARD: If logs span too many years, limit "Full Calendar Filling" to current month only.
+    // SAFETY GUARD: If logs span too many years, limit to current month only.
     if ((maxD.getTime() - minD.getTime()) > (62 * 24 * 60 * 60 * 1000)) {
       minD = new Date(maxD.getFullYear(), maxD.getMonth(), 1);
     }
@@ -646,13 +1119,17 @@ async function generateReport() {
     const m2t = m => m == null || isNaN(m) ? '--' : pad2(Math.floor(m / 60)) + ':' + pad2(m % 60);
     const fmtD = m => m <= 0 ? '--' : (Math.floor(m / 60) ? Math.floor(m / 60) + 'h ' : '') + ((m % 60) ? m % 60 + 'm' : '');
 
+    let oddPunchCount = 0;
     S.records = [];
     for (const dt of dts) {
       for (const uid of uids) {
         const k = uid + '|' + dt;
         const g = grouped[k];
         const info = S.shiftMap[uid] || { name: 'User ' + uid, branch: '', department: '', shiftStart: null, shiftEnd: null };
-        const ps = g ? g.punches.sort((a, b) => a - b) : [];
+        let ps = g ? g.punches.sort((a, b) => a - b) : [];
+
+        // ── EDGE CASE: Filter invalid timestamps ──
+        ps = ps.filter(p => !isNaN(p.getTime()));
 
         const dy = new Date(dt + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
         const hasShift = info.shiftStart !== null && info.shiftEnd !== null && (info.shiftStart !== 0 || info.shiftEnd !== 0);
@@ -661,22 +1138,21 @@ async function generateReport() {
         let first = null, last = null, hrs = 0, inM = null, outM = null, status = 'Absent', lateMins = 0, earlyMins = 0, earlyArrivalMins = 0, otMins = 0;
         const sDur = hasShift ? getShiftDurationMinutes(info.shiftStart, info.shiftEnd) : 0;
 
-        const isHol = S.holidays.find(h => {
-          const empBranch = (info.branch || '').trim().toLowerCase();
-          const bMatch = h.b.some(b => empBranch.includes(b.trim().toLowerCase()));
-          if (!bMatch) return false;
-          if (h.d2) return dt >= h.d && dt <= h.d2;
-          return dt === h.d;
-        });
+        // ── HOLIDAY CHECK: Use new isHoliday() function ──
+        const isHol = isHoliday(dt, info.branch);
 
         if (ps.length === 0) {
+          // Holiday overrides Absent
           if (isHol) status = 'Holiday';
           else if (dy === 'Sun') status = 'Week Off';
         }
 
         if (ps.length > 0) {
           first = ps[0]; last = ps[ps.length - 1];
-          const workedMins = getWorkedMinutesFromPunches(ps);
+          const workData = getWorkedMinutesFromPunches(ps);
+          const workedMins = workData.mins;
+          if (workData.isOdd && ps.length > 1) oddPunchCount++;
+
           hrs = workedMins / 60;
           inM = first.getHours() * 60 + first.getMinutes();
           outM = last.getHours() * 60 + last.getMinutes();
@@ -691,11 +1167,19 @@ async function generateReport() {
           earlyArrivalMins = hasShift ? getEarlyArrivalMinutes(sSt, inM) : 0;
           earlyMins = hasShift ? getEarlyMinutes(sSt, sEn, outM) : 0;
 
-          if (hrs < 4.5) status = 'Half Day';
-          if (hrs < 0.25 || ps.length === 1) status = 'Missed Punch';
+          // ── EDGE CASE: Odd punch count → Missed Punch ──
+          if (ps.length === 1 || workData.isOdd) status = 'Missed Punch';
+          else if (hrs < 0.25) status = 'Missed Punch';
+          else if (hrs < 4.5) status = 'Half Day';
 
+          // ── CORRECTED OT: late and early exit reduce effective work ──
           if (status !== 'Missed Punch') {
-            otMins = hasShift ? getOvertimeMinutes(sSt, sEn, workedMins) : 0;
+            otMins = hasShift ? getOvertimeMinutes(sSt, sEn, workedMins, lateMins, earlyMins) : 0;
+          }
+
+          // ── HOLIDAY OVERRIDE: Holiday overrides Late status ──
+          if (isHol && ['Late', 'Absent'].includes(status)) {
+            status = 'Holiday';
           }
         }
 
@@ -710,13 +1194,13 @@ async function generateReport() {
         const gapFmt = gapMins === 0 ? '0m' : fmtD(Math.abs(gapMins));
         const gapClass = gapMins <= 0 ? 'g-ok' : 'g-err';
 
-        // Ensure strings are generated properly for UI
         const lateStr = lateMins > 0 ? fmtD(lateMins) : '--';
         const earlyStr = earlyMins > 0 ? fmtD(earlyMins) : '--';
         const earlyArriveStr = earlyArrivalMins > 0 ? fmtD(earlyArrivalMins) : '--';
+        const empKey = makeEmployeeKey(uid, info.branch);
 
         S.records.push({
-          uid, name: info.name, branch: info.branch, department: info.department,
+          uid, empKey, name: info.name, branch: info.branch, department: info.department,
           date: dt, day: dy, shiftDisplay: sd,
           firstIn: ps.length ? m2t(inM) : '--', lastOut: ps.length ? m2t(outM) : '--',
           hoursWorked: Math.round(hrs * 100) / 100, status,
@@ -727,10 +1211,17 @@ async function generateReport() {
         });
       }
     }
+
+    // Aggregated Validation Alert
+    if (oddPunchCount > 0) {
+      AppState.validation.warnings.push(`ℹ ${oddPunchCount} records have a Missed Punch detected — hours calculated using absolute first and last punch.`);
+      renderValidationCenter(AppState.validation.warnings); // Re-render to catch immediate additions
+    }
+
     setProg(90, 'Saving session...');
     buildReport();
     renderSparklines();
-    setProg(100, `Done - ${S.records.length} records processed.`);
+    setProg(100, `Done — ${S.records.length} records processed.`);
     setTimeout(hideProg, 1200);
     document.getElementById('upload-section').style.display = 'none';
     document.getElementById('workspace-head').style.display = 'none';
@@ -789,46 +1280,70 @@ function buildReport() {
 function detectMachineFailures() {
   const r = S.records; if (!r.length) return;
 
-  function isHolidayForBranch(date, branch) {
-    const curBranch = (branch || '').trim().toLowerCase();
-    return S.holidays.some(h => {
-      const bMatch = h.b.some(b => curBranch.includes(b.trim().toLowerCase()));
-      if (!bMatch) return false;
-      if (h.d2) return date >= h.d && date <= h.d2;
-      return date === h.d;
-    });
-  }
-
+  // Group by branch+date
   const grouped = {};
   r.forEach(x => {
     const bk = x.date + '|' + (x.branch || 'Default');
     if (!grouped[bk]) grouped[bk] = {
-      total: 0, absent: 0, punched: 0,
+      total: 0, absent: 0, punched: 0, totalPunches: 0,
       date: x.date, branch: x.branch
     };
     grouped[bk].total++;
     if (x.status === 'Absent') grouped[bk].absent++;
     if (!['Absent', 'Week Off', 'Holiday', 'System Error'].includes(x.status)) grouped[bk].punched++;
+    grouped[bk].totalPunches += (x.punchCount || 0);
+  });
+
+  // Calculate branch averages for comparison
+  const branchAvgPunches = {};
+  const branchDayCounts = {};
+  Object.values(grouped).forEach(g => {
+    const br = g.branch || 'Default';
+    if (!branchAvgPunches[br]) { branchAvgPunches[br] = 0; branchDayCounts[br] = 0; }
+    branchAvgPunches[br] += g.totalPunches;
+    branchDayCounts[br]++;
+  });
+  Object.keys(branchAvgPunches).forEach(br => {
+    branchAvgPunches[br] = branchDayCounts[br] ? branchAvgPunches[br] / branchDayCounts[br] : 0;
   });
 
   S.failureDates = [];
+  let affectedRecords = 0;
+
   Object.keys(grouped).forEach(bk => {
     const g = grouped[bk];
     const dy = new Date(g.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
     if (dy === 'Sun') return;
-    if (isHolidayForBranch(g.date, g.branch)) return;
+
+    // Holiday check with debug logging
+    const holCheck = isHoliday(g.date, g.branch);
+    if (holCheck) {
+      console.log(`[MachineFailure] Skipping ${g.date} ${g.branch} — holiday: ${holCheck.name}`);
+      return;
+    }
+
     if (g.total < 3) return;
+
     const absentRate = g.absent / g.total;
+    const br = g.branch || 'Default';
+    const avgPunches = branchAvgPunches[br] || 0;
+    const punchRatio = avgPunches > 0 ? g.totalPunches / avgPunches : 1;
+
+    // Enhanced detection conditions
     const isZeroPunchDay = g.punched === 0 && g.absent >= 3;
     const isNearZeroDay = g.punched <= 2 && g.absent >= 3 && absentRate >= 0.80;
     const isHighSpike = absentRate >= 0.40 && g.absent >= 3;
     const isModerateSpike = g.total >= 10 && absentRate >= 0.30 && g.absent >= 4;
-    const isAnomaly = isZeroPunchDay || isNearZeroDay || isHighSpike || isModerateSpike;
+    // NEW: Absence >15% AND punch volume <50% of branch average
+    const isLowPunchAnomaly = absentRate > 0.15 && punchRatio < 0.5 && g.absent >= 3;
+
+    const isAnomaly = isZeroPunchDay || isNearZeroDay || isHighSpike || isModerateSpike || isLowPunchAnomaly;
 
     if (isAnomaly) {
       let reason = 'high absence spike';
       if (isZeroPunchDay) reason = 'zero punch day (total machine failure)';
       else if (isNearZeroDay) reason = 'near-zero punches (likely machine failure)';
+      else if (isLowPunchAnomaly) reason = `low punch volume (${Math.round(punchRatio * 100)}% of avg) + ${Math.round(absentRate * 100)}% absent`;
       else if (isHighSpike) reason = `${Math.round(absentRate * 100)}% absence spike`;
       else if (isModerateSpike) reason = `${Math.round(absentRate * 100)}% absence in large branch`;
 
@@ -846,10 +1361,30 @@ function detectMachineFailures() {
           x.status = 'System Error';
           x.gapMins = 0; x.gapFmt = '0m'; x.gapClass = 'g-ok';
           x.lateMins = 0; x.earlyMins = 0; x.lateBy = '--'; x.earlyBy = '--';
+          affectedRecords++;
         }
       });
     }
   });
+
+  // ── SAFETY POST-PASS: Holiday ALWAYS overrides System Error ──
+  // This catches individual records whose branch normalization differs from the group
+  r.forEach(x => {
+    if (x.status === 'System Error') {
+      const hol = isHoliday(x.date, x.branch);
+      if (hol) {
+        console.log(`[Holiday Override] ${x.date} ${x.uid} ${x.branch} → Holiday (was System Error): ${hol.name}`);
+        x.status = 'Holiday';
+      }
+    }
+  });
+
+  // Calculate Data Reliability
+  const totalWorkingRecords = r.filter(x => !['Week Off', 'Holiday'].includes(x.status)).length;
+  const sysErrorRecords = r.filter(x => x.status === 'System Error').length;
+  AppState.processed.dataReliability = totalWorkingRecords > 0
+    ? Math.round(((totalWorkingRecords - sysErrorRecords) / totalWorkingRecords) * 100)
+    : 100;
 }
 
 function quickFilter(s) {
@@ -879,8 +1414,11 @@ function renderInsights() {
 
   const latePct = Math.round((S.lateRecs.length / r.length) * 100);
   const totalAtt = Math.round((r.filter(x => isAttendedStatus(x.status)).length / r.length) * 100);
+  const reliability = AppState.processed.dataReliability;
+  const holidayCount = AppState.config.holidays.length;
+  const warnings = AppState.validation.warnings;
 
-  ins.innerHTML = `
+  let html = `
     <div class="insight-item">
       <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14.8 8.7 21 9.5l-4.5 4.3 1.1 6.2L12 17.1 6.4 20l1.1-6.2L3 9.5l6.2-.8z"></path></svg></div>
       <div class="insight-copy"><span class="insight-kicker">Top Branch</span><div class="insight-txt"><strong>${dash(topBr)}</strong> is leading with <strong>${topPct}%</strong> attendance stability.</div></div>
@@ -888,18 +1426,41 @@ function renderInsights() {
     <div class="insight-item">
       <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h16"></path><path d="M7 14 10 11l3 2 4-5"></path></svg></div>
       <div class="insight-copy"><span class="insight-kicker">Stability</span><div class="insight-txt"><strong>${totalAtt}%</strong> overall attendance. ${totalAtt > 85 ? 'Very healthy.' : 'Needs review.'}</div></div>
-    </div>
-    ${S.failureDates.length ? `
+    </div>`;
+
+  if (S.failureDates.length) {
+    html += `
     <div class="insight-item" onclick="quickFilter('System Error')" style="cursor:pointer">
       <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 4.9 2.6 18.2a1 1 0 0 0 .9 1.5h17a1 1 0 0 0 .9-1.5L13.7 4.9a1 1 0 0 0-1.7 0z"></path></svg></div>
-      <div class="insight-copy"><span class="insight-kicker">System Alert</span><div class="insight-txt"><strong>${S.failureDates.length} incident${S.failureDates.length > 1 ? 's' : ''}</strong> across <strong>${[...new Set(S.failureDates.map(f => f.branch))].length} branch${[...new Set(S.failureDates.map(f => f.branch))].length > 1 ? 'es' : ''}</strong>. Click to review System Error rows.</div></div>
-    </div>` : `
+      <div class="insight-copy"><span class="insight-kicker">System Alert</span><div class="insight-txt"><strong>${S.failureDates.length} incident${S.failureDates.length > 1 ? 's' : ''}</strong> across <strong>${[...new Set(S.failureDates.map(f => f.branch))].length} branch${[...new Set(S.failureDates.map(f => f.branch))].length > 1 ? 'es' : ''}</strong>. Data reliability: <strong>${reliability}%</strong>.</div></div>
+    </div>`;
+  } else {
+    html += `
     <div class="insight-item">
       <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></div>
       <div class="insight-copy"><span class="insight-kicker">Punctuality</span><div class="insight-txt"><strong>${latePct}%</strong> of records are late. ${latePct < 10 ? 'Excellent discipline.' : 'Review shift overlaps.'}</div></div>
-    </div>
-    `}
-  `;
+    </div>`;
+  }
+
+  // Validation warnings insight
+  if (warnings.length) {
+    html += `
+    <div class="insight-item">
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">Data Quality</span><div class="insight-txt">${warnings[0]}${warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''}</div></div>
+    </div>`;
+  }
+
+  // Holiday info
+  if (holidayCount) {
+    html += `
+    <div class="insight-item">
+      <div class="insight-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3"></rect><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path></svg></div>
+      <div class="insight-copy"><span class="insight-kicker">Holiday Calendar</span><div class="insight-txt"><strong>${holidayCount}</strong> holidays loaded for branch-wise detection.</div></div>
+    </div>`;
+  }
+
+  ins.innerHTML = html;
 }
 
 function switchTab(name, btn) {
@@ -1084,6 +1645,17 @@ function renderStats(recs) {
   document.getElementById('st-late-sub').textContent = recs.length ? Math.round(late / recs.length * 100) + '% of records' : '';
   document.getElementById('st-abs').textContent = absent;
   document.getElementById('st-abs-sub').textContent = recs.length ? Math.round(absent / recs.length * 100) + '% of records' : '';
+
+  // Data Reliability Indicator
+  const reliability = AppState.processed.dataReliability;
+  const reliClass = reliability > 90 ? 'high' : reliability > 70 ? 'medium' : 'low';
+  const reliLabel = reliability > 90 ? '✓ Reliable' : reliability > 70 ? '⚠ Moderate' : '✗ Low';
+  const reliEl = document.getElementById('data-reliability');
+  if (reliEl) {
+    reliEl.className = 'data-confidence ' + reliClass;
+    reliEl.textContent = `${reliLabel} (${reliability}%)`;
+    reliEl.style.display = recs.length ? 'inline-flex' : 'none';
+  }
 }
 
 
@@ -1389,10 +1961,12 @@ function renderAuditSelects() {
   const mp = document.getElementById('month-picker');
   if (!yp || !mp) return;
 
-  yp.innerHTML = '<option value="" disabled selected>Year</option>' +
+  yp.innerHTML = '<option value="" disabled>Year</option>' +
     years.map(y => `<option value="${y}">${y}</option>`).join('');
 
-  if (years.length === 1) yp.value = years[0];
+  if (years.length > 0) {
+    yp.value = years[0];
+  }
 }
 
 function jumpToDateContext() {
@@ -1403,15 +1977,24 @@ function jumpToDateContext() {
   const year = yp.value;
   const month = mp.value;
 
-  if (!year || month === '') return;
+  if (!year) return; // Need at least a year
 
-  const targetMonth = parseInt(month);
   const targetYear = parseInt(year);
-
   const pad = n => String(n).padStart(2, '0');
-  const dFrom = `${targetYear}-${pad(targetMonth + 1)}-01`;
-  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
-  const dTo = `${targetYear}-${pad(targetMonth + 1)}-${pad(lastDay)}`;
+
+  let dFrom, dTo;
+
+  if (month !== '') {
+    // Both Year and Month
+    const targetMonth = parseInt(month);
+    dFrom = `${targetYear}-${pad(targetMonth + 1)}-01`;
+    const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+    dTo = `${targetYear}-${pad(targetMonth + 1)}-${pad(lastDay)}`;
+  } else {
+    // Year only
+    dFrom = `${targetYear}-01-01`;
+    dTo = `${targetYear}-12-31`;
+  }
 
   document.getElementById('date-from').value = dFrom;
   document.getElementById('date-to').value = dTo;
@@ -1735,5 +2318,15 @@ window.closeSidebar = function () {
   if (sidebar) sidebar.classList.remove('open');
   if (overlay) { overlay.classList.remove('open'); setTimeout(() => overlay.style.display = 'none', 300); }
 };
+
+// Expose new v2.0 functions for HTML event handlers
+window.clearHolidayData = clearHolidayData;
+window.handleFiles = handleFiles;
+window.applyTheme = applyTheme;
+window.toggleTheme = toggleTheme;
+window.AppState = AppState;
+// Debug exports (for console verification)
+window.normalizeBranch = normalizeBranch;
+window.isHoliday = isHoliday;
 
 initApp();
